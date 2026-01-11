@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
-// @version      1.17.15
+// @version      1.17.16
 // @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -209,32 +209,33 @@
 
     // 监听动态添加的 DOM 节点（用于捕获自定义 Tooltip）
     // 使用 mouseover + XPath 查找可见的 Tooltip 元素
-    // 这种方式比 MutationObserver 更精准地覆盖 "文字已存在但隐藏" 的情况
-    document.addEventListener('mouseover', () => {
-        // 给一点延时让 Tooltip 渲染/显示
-        setTimeout(() => {
-            // 查找所有包含 "全屏" 或 "退出全屏" 或 "弹幕" 相关文本的元素
-            // 使用 XPath 查找：全匹配全屏/退出全屏，模糊匹配弹幕
-            const xpath = "//*[text()='全屏' or text()='退出全屏' or contains(text(), '弹幕')]";
-            const result = document.evaluate(xpath, document.body, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
+    // 性能优化：使用 debounce 防抖，避免每次鼠标移动都触发昂贵的 XPath 查询
+    function modifyFullscreenTooltip() {
+        // 查找所有包含 "全屏" 或 "退出全屏" 或 "弹幕" 相关文本的元素
+        const xpath = "//*[text()='全屏' or text()='退出全屏' or contains(text(), '弹幕')]";
+        // 尝试在全屏元素内查找（如果在全屏模式下），否则查找 body
+        const contextNode = document.fullscreenElement || document.body;
+        const result = document.evaluate(xpath, contextNode, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
 
-            for (let i = 0; i < result.snapshotLength; i++) {
-                const node = result.snapshotItem(i);
-                // 检查元素是否可见 (offsetParent 不为 null 代表可见)
-                if (node.offsetParent !== null) {
-                    const text = node.innerText.trim();
-                    if (text === '全屏') {
-                        node.innerText = '全屏 (F)';
-                    } else if (text === '退出全屏') {
-                        node.innerText = '退出全屏 (F)';
-                    } else if (text.includes('弹幕') && text.length <= 5 && !text.includes('(D)')) {
-                        // 模糊匹配：只要包含弹幕且长度短（防止误伤长句子），就追加 (D)
-                        node.innerText = text + ' (D)';
-                    }
+        for (let i = 0; i < result.snapshotLength; i++) {
+            const node = result.snapshotItem(i);
+            // 检查元素是否可见 (offsetParent 不为 null 代表可见)
+            if (node.offsetParent !== null) {
+                const text = node.innerText.trim();
+                if (text === '全屏') {
+                    node.innerText = '全屏 (F)';
+                } else if (text === '退出全屏') {
+                    node.innerText = '退出全屏 (F)';
+                } else if (text.includes('弹幕') && text.length <= 5 && !text.includes('(D)')) {
+                    // 模糊匹配：只要包含弹幕且长度短（防止误伤长句子），就追加 (D)
+                    node.innerText = text + ' (D)';
                 }
             }
-        }, 50);
-    });
+        }
+    }
+
+    const debouncedModifyTooltip = debounce(modifyFullscreenTooltip, 100); // 100ms 延迟，既流畅又省资源
+    document.addEventListener('mouseover', debouncedModifyTooltip);
 
     function init() {
         closeDanmu();
