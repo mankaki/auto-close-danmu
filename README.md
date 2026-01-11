@@ -10,4 +10,9 @@
 2. 加了个按钮，在屏幕右下角，可选择是否自动关闭弹幕，默认自动关闭弹幕
 3. 支持快捷键 D 手动开启/关闭弹幕
 
+安装方式：
+1. 前提：已安装油猴或类似支持安装脚本的插件
+2. 方法一 → 点击链接：https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
+3. 方法二 → 使用 greasy fork 安装：https://greasyfork.org/zh-CN/scripts/515421-%E8%8A%92%E6%9E%9Ctv%E7%BD%91%E9%A1%B5%E7%89%88%E8%87%AA%E5%8A%A8%E5%85%B3%E9%97%AD%E5%BC%B9%E5%B9%95
+
 ![截图](Snipaste_2025-04-17_01-16-42.png)
