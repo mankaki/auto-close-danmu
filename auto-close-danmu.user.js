@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
-// @version      1.17.7
+// @version      1.17.15
 // @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -51,6 +51,13 @@
         document.body.appendChild(tooltip);
 
         button.addEventListener('mouseenter', () => {
+            // 关键修复：全屏模式下，必须将 Tooltip 移动到全屏元素内部，否则会被遮挡
+            const container = document.fullscreenElement || document.body;
+            if (tooltip.parentNode !== container) {
+                container.appendChild(tooltip);
+            }
+            tooltip.style.zIndex = '2147483647';
+
             const rect = button.getBoundingClientRect();
             if (direction === 'left') {
                 tooltip.style.left = `${rect.left}px`;
@@ -141,7 +148,10 @@
         const active = document.activeElement;
         const tagName = active.tagName;
         const isContentEditable = active.isContentEditable;
-        return (tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable);
+        const isTextbox = active.getAttribute('role') === 'textbox';
+        // 增加对常见输入框 class 的检测（不区分大小写）
+        const isInputClass = active.className && typeof active.className === 'string' && /input|textarea/i.test(active.className);
+        return (tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable || isTextbox || isInputClass);
     }
 
     function toggleFullscreen() {
@@ -177,6 +187,8 @@
     }
 
     window.addEventListener('keydown', (e) => {
+        // 如果正在输入法输入中，直接返回，防止误触
+        if (e.isComposing || e.keyCode === 229) return;
         if (isTyping()) return; // 如果正在输入，不触发快捷键
 
         if (e.key === 'd' || e.key === 'D') {
@@ -187,28 +199,46 @@
     });
 
     function addDanmuShortcutTooltip() {
-        const danmuButton = document.querySelector("._danmuSwitcher_1qow5_208");
-        if (!danmuButton || danmuButton.dataset.tooltipAttached) return;
-        // 使用默认上方 tooltip
-        addTooltip(danmuButton, "💡 按 D 键可开关弹幕", 'top');
+        const danmuButtons = document.querySelectorAll("._danmuSwitcher_1qow5_208");
+        danmuButtons.forEach(btn => {
+            if (!btn || btn.dataset.tooltipAttached) return;
+            // 使用默认上方 tooltip
+            addTooltip(btn, "💡 按 D 键可开关弹幕", 'top');
+        });
     }
 
-    function updateFullscreenTooltip() {
-        const fsBtn = document.querySelector('[title="全屏"]');
-        if (fsBtn) {
-            fsBtn.setAttribute('title', '全屏 (F)');
-        }
+    // 监听动态添加的 DOM 节点（用于捕获自定义 Tooltip）
+    // 使用 mouseover + XPath 查找可见的 Tooltip 元素
+    // 这种方式比 MutationObserver 更精准地覆盖 "文字已存在但隐藏" 的情况
+    document.addEventListener('mouseover', () => {
+        // 给一点延时让 Tooltip 渲染/显示
+        setTimeout(() => {
+            // 查找所有包含 "全屏" 或 "退出全屏" 或 "弹幕" 相关文本的元素
+            // 使用 XPath 查找：全匹配全屏/退出全屏，模糊匹配弹幕
+            const xpath = "//*[text()='全屏' or text()='退出全屏' or contains(text(), '弹幕')]";
+            const result = document.evaluate(xpath, document.body, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
 
-        const exitFsBtn = document.querySelector('[title="退出全屏"]');
-        if (exitFsBtn) {
-            exitFsBtn.setAttribute('title', '退出全屏 (F)');
-        }
-    }
+            for (let i = 0; i < result.snapshotLength; i++) {
+                const node = result.snapshotItem(i);
+                // 检查元素是否可见 (offsetParent 不为 null 代表可见)
+                if (node.offsetParent !== null) {
+                    const text = node.innerText.trim();
+                    if (text === '全屏') {
+                        node.innerText = '全屏 (F)';
+                    } else if (text === '退出全屏') {
+                        node.innerText = '退出全屏 (F)';
+                    } else if (text.includes('弹幕') && text.length <= 5 && !text.includes('(D)')) {
+                        // 模糊匹配：只要包含弹幕且长度短（防止误伤长句子），就追加 (D)
+                        node.innerText = text + ' (D)';
+                    }
+                }
+            }
+        }, 50);
+    });
 
     function init() {
         closeDanmu();
         addDanmuShortcutTooltip();
-        updateFullscreenTooltip();
     }
 
     window.addEventListener('load', init);
@@ -241,8 +271,8 @@
             lastUrl = currentUrl;
             init();
         }
-        // 持续检查并更新全屏按钮文案（防止被播放器重置）
-        updateFullscreenTooltip();
+        // 持续尝试添加弹幕快捷键提示（应对播放器全屏切换/重绘导致按钮重建）
+        addDanmuShortcutTooltip();
     }, 1000);
 
     // 防抖函数，避免频繁触发

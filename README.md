@@ -16,4 +16,4 @@
 2. 方法一 → [点击链接安装](https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js)
 3. 方法二 → [前往 Greasy Fork 安装](https://greasyfork.org/zh-CN/scripts/515421-%E8%8A%92%E6%9E%9Ctv%E7%BD%91%E9%A1%B5%E7%89%88%E8%87%AA%E5%8A%A8%E5%85%B3%E9%97%AD%E5%BC%B9%E5%B9%95)
 
-![截图](Snipaste_2025-04-17_01-16-42.png)
+![截图](PixPin_2026-01-11_20-52-55.png)
