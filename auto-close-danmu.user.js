@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
-// @version      1.17.5
+// @version      1.17.6
 // @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -137,9 +137,52 @@
         }
     }
 
+    function isTyping() {
+        const active = document.activeElement;
+        const tagName = active.tagName;
+        const isContentEditable = active.isContentEditable;
+        return (tagName === 'INPUT' || tagName === 'TEXTAREA' || isContentEditable);
+    }
+
+    function toggleFullscreen() {
+        // 尝试寻找全屏按钮点击（以同步UI状态）
+        // 芒果TV的全屏按钮通常有 title="全屏" 或 "退出全屏"
+        const fsBtn = document.querySelector('[title="全屏"]') ||
+            document.querySelector('[title="退出全屏"]') ||
+            document.querySelector('mango-icon[name="fullscreen"]'); // 猜测的选择器
+
+        if (fsBtn) {
+            fsBtn.click();
+            console.log("切换全屏 (点击按钮)");
+            return;
+        }
+
+        // 兜底：使用原生 API
+        const player = document.querySelector('.mango-player') || document.body;
+        if (!document.fullscreenElement) {
+            if (player.requestFullscreen) {
+                player.requestFullscreen();
+            } else if (player.webkitRequestFullscreen) {
+                player.webkitRequestFullscreen();
+            }
+            console.log("切换全屏 (原生API)");
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            }
+            console.log("退出全屏 (原生API)");
+        }
+    }
+
     window.addEventListener('keydown', (e) => {
+        if (isTyping()) return; // 如果正在输入，不触发快捷键
+
         if (e.key === 'd' || e.key === 'D') {
             toggleDanmu();
+        } else if (e.key === 'f' || e.key === 'F') {
+            toggleFullscreen();
         }
     });
 
@@ -147,7 +190,7 @@
         const danmuButton = document.querySelector("._danmuSwitcher_1qow5_208");
         if (!danmuButton || danmuButton.dataset.tooltipAttached) return;
         // 使用默认上方 tooltip
-        addTooltip(danmuButton, "💡 按 D 键可开关弹幕", 'top');
+        addTooltip(danmuButton, "💡 按 D 键开关弹幕 | 按 F 键全屏", 'top');
     }
 
     function init() {
