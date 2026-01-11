@@ -1,14 +1,4 @@
 // ==UserScript==
-// @name         芒果TV自动关闭弹幕
-// @namespace    http://tampermonkey.net/
-// @version      1.17.3
-// @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
-// @author       mankaki
-// @match        *://www.mgtv.com/*
-// @grant        none
-// @license      GPL-3.0
-
-// ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
 // @version      1.17.4
@@ -18,8 +8,8 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
 // @grant        none
 // @license      GPL-3.0
-// @downloadURL https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
-// @updateURL https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
+// @downloadURL https://github.com/mankaki/auto-close-danmu/raw/refs/heads/main/auto-close-danmu.user.js
+// @updateURL https://github.com/mankaki/auto-close-danmu/raw/refs/heads/main/auto-close-danmu.user.js
 // ==/UserScript==
  
 (function () {
