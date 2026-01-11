@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
-// @version      1.17.6
+// @version      1.17.7
 // @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -190,12 +190,25 @@
         const danmuButton = document.querySelector("._danmuSwitcher_1qow5_208");
         if (!danmuButton || danmuButton.dataset.tooltipAttached) return;
         // 使用默认上方 tooltip
-        addTooltip(danmuButton, "💡 按 D 键开关弹幕 | 按 F 键全屏", 'top');
+        addTooltip(danmuButton, "💡 按 D 键可开关弹幕", 'top');
+    }
+
+    function updateFullscreenTooltip() {
+        const fsBtn = document.querySelector('[title="全屏"]');
+        if (fsBtn) {
+            fsBtn.setAttribute('title', '全屏 (F)');
+        }
+
+        const exitFsBtn = document.querySelector('[title="退出全屏"]');
+        if (exitFsBtn) {
+            exitFsBtn.setAttribute('title', '退出全屏 (F)');
+        }
     }
 
     function init() {
         closeDanmu();
         addDanmuShortcutTooltip();
+        updateFullscreenTooltip();
     }
 
     window.addEventListener('load', init);
@@ -228,6 +241,8 @@
             lastUrl = currentUrl;
             init();
         }
+        // 持续检查并更新全屏按钮文案（防止被播放器重置）
+        updateFullscreenTooltip();
     }, 1000);
 
     // 防抖函数，避免频繁触发
