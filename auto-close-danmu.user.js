@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版自动关闭弹幕
 // @namespace    http://tampermonkey.net/
-// @version      1.17.4
+// @version      1.17.5
 // @description  自动关闭芒果TV视频弹幕，支持切换集数后自动关闭弹幕，用户可选择启用或禁用功能，支持快捷键 D 手动开启/关闭弹幕
 // @author       mankaki
 // @match        *://www.mgtv.com/*
