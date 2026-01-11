@@ -8,8 +8,8 @@
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
 // @grant        none
 // @license      GPL-3.0
-// @downloadURL https://github.com/mankaki/auto-close-danmu/raw/refs/heads/main/auto-close-danmu.user.js
-// @updateURL https://github.com/mankaki/auto-close-danmu/raw/refs/heads/main/auto-close-danmu.user.js
+// @downloadURL  https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
+// @updateURL    https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
 // ==/UserScript==
  
 (function () {
