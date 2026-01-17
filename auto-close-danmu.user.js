@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.0.6
+// @version      2.0.8
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -18,8 +18,8 @@
     let autoCloseDanmu = JSON.parse(localStorage.getItem('autoCloseDanmu')) ?? true;
     let networkErrorFlag = false;
     let lastUrl = window.location.href;
-    let hasAutoClosedForCurrentUrl = false; // 防止重复自动关闭
-    let consecutiveOffCount = 0; // 连续检测到弹幕关闭的次数（用于确认稳定性）
+    let isManualIntervention = false; // 标记用户本集是否手动干预过（手动开启或关闭）
+    let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
 
     function createTooltip(text, direction = 'top') {
         const tooltip = document.createElement('div');
@@ -131,27 +131,23 @@
 
     function closeDanmu() {
         if (!autoCloseDanmu) return;
-        // 如果已经确认稳定关闭，则跳过
-        if (hasAutoClosedForCurrentUrl) return;
+        // 如果用户本集手动操作过，脚本不再干预
+        if (isManualIntervention) return;
 
-        const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208");
+        const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208") ||
+            document.querySelector(".danmu-switch"); // 增加备选选择器
 
         if (danmuBtn) {
-            const isOn = danmuBtn.classList.contains("_on_1qow5_238");
+            const isOn = danmuBtn.classList.contains("_on_1qow5_238") ||
+                danmuBtn.classList.contains("on") ||
+                danmuBtn.getAttribute('aria-checked') === 'true';
+
             if (isOn) {
                 // 如果是开启状态，执行关闭
+                isScriptClicking = true;
                 danmuBtn.click();
-                // console.log("检测到弹幕开启，尝试自动关闭...");
-                // 只要有点开，就重置稳定性计数
-                consecutiveOffCount = 0;
-            } else {
-                // 如果目前是关闭状态，增加稳定性计数
-                consecutiveOffCount++;
-                // 只有连续 5 次（5秒）检测到都是关闭状态，才认为本集稳定处理完毕
-                if (consecutiveOffCount >= 5) {
-                    hasAutoClosedForCurrentUrl = true;
-                    // console.log("弹幕状态稳定（已连续5秒关闭），停止轮询检查");
-                }
+                isScriptClicking = false;
+                // console.log("检测到弹幕开启，强制自动关闭 (v2.0.8)");
             }
         }
     }
@@ -217,6 +213,22 @@
         }
     });
 
+    // 监听全局点击，识别用户对手动操作弹幕按钮的行为
+    document.addEventListener('click', (e) => {
+        if (isScriptClicking) return;
+
+        // 检查点击目标是否是弹幕开关
+        // v2.0.8 进一步收窄范围，仅监听特定的开关类名，避免误触
+        const isDanmuBtn = e.target.closest("._danmuSwitcher_1qow5_208") ||
+            e.target.closest(".danmu-switch");
+
+        if (isDanmuBtn) {
+            // 用户手动点击了开关，记录为手动干预
+            isManualIntervention = true;
+            // console.log("检测到用户手动操作，本集不再自动关弹幕");
+        }
+    }, true);
+
     function addDanmuShortcutTooltip() {
         const danmuButtons = document.querySelectorAll("._danmuSwitcher_1qow5_208");
         danmuButtons.forEach(btn => {
@@ -230,13 +242,12 @@
     // 使用 mouseover + XPath 查找可见的 Tooltip 元素
     // 性能优化：使用 debounce 防抖，避免每次鼠标移动都触发昂贵的 XPath 查询
     function modifyFullscreenTooltip() {
-        // 查找所有包含 "全屏" 或 "退出全屏" 或 "弹幕" 相关文本的元素
-        const xpath = "//*[text()='全屏' or text()='退出全屏' or contains(text(), '弹幕') or text()='弹']";
+        // 查找所有包含 "全屏" 或 "退出全屏" 相关文本的元素
+        // v2.0.7 优化：仅精准匹配 "全屏" 文案，避免误伤其他按钮
+        const xpath = "//*[text()='全屏']";
         // 尝试在全屏元素内查找（如果在全屏模式下），否则查找 body
         const contextNode = document.fullscreenElement || document.body;
         const result = document.evaluate(xpath, contextNode, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
-
-        const danmuKeywords = new Set(['弹幕', '弹', '开启弹幕', '关闭弹幕', '显示弹幕', '隐藏弹幕']);
 
         for (let i = 0; i < result.snapshotLength; i++) {
             const node = result.snapshotItem(i);
@@ -248,8 +259,6 @@
 
                 if (text === '全屏') {
                     node.innerText = '全屏 (F)';
-                } else if (text === '退出全屏') {
-                    node.innerText = '退出全屏 (F)';
                 }
             }
         }
@@ -575,16 +584,16 @@
         const currentUrl = window.location.href;
         if (currentUrl !== lastUrl) {
             lastUrl = currentUrl;
-            hasAutoClosedForCurrentUrl = false;
-            consecutiveOffCount = 0; // 重置计数
+            isManualIntervention = false; // 重置手动干预标记
             init();
         }
-        // 如果当前页还没处理过自动关闭，则持续尝试（处理 SPA 异步加载延迟）
-        if (!hasAutoClosedForCurrentUrl) {
+        // v2.0.8：只要没被手动干预过，就始终尝试关闭（处理异步反复开启的情况）
+        if (autoCloseDanmu && !isManualIntervention) {
             closeDanmu();
         }
+        // 持续尝试添加弹幕快捷键提示
         addDanmuShortcutTooltip();
-    }, 1000);
+    }, 500);
 
     // 防抖函数，避免频繁触发
     function debounce(func, wait) {
@@ -610,8 +619,7 @@
     const resetAutoClose = (e) => {
         if (e.target.tagName === 'VIDEO') {
             // console.log(`检测到视频事件: ${e.type}，重置自动关闭状态`);
-            hasAutoClosedForCurrentUrl = false;
-            consecutiveOffCount = 0; // 重置计数
+            isManualIntervention = false;
             init();
         }
     };
@@ -625,8 +633,7 @@
         mutations.forEach(mutation => {
             if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
                 // console.log("检测到视频源变化，重置自动关闭状态");
-                hasAutoClosedForCurrentUrl = false;
-                consecutiveOffCount = 0; // 重置计数
+                isManualIntervention = false;
                 init();
             }
         });
