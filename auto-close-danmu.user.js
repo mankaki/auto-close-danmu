@@ -53,7 +53,7 @@
         document.body.appendChild(tooltip);
 
         button.addEventListener('mouseenter', () => {
-            // 关键修复：全屏模式下，必须将 Tooltip 移动到全屏元素内部，否则会被遮挡
+            // 全屏模式下，必须将 Tooltip 移动到全屏元素内部，否则会被遮挡
             const container = document.fullscreenElement || document.body;
             if (tooltip.parentNode !== container) {
                 container.appendChild(tooltip);
@@ -125,7 +125,7 @@
 
         document.body.appendChild(button);
 
-        // 左侧显示 tooltip（不使用 title）
+        // 左侧显示 tooltip
         addTooltip(button, '💡 是否自动关闭弹幕', 'left');
     }
 
@@ -176,7 +176,6 @@
 
     function toggleFullscreen() {
         // 尝试寻找全屏按钮点击（以同步UI状态）
-        // 芒果TV的全屏按钮通常有 title="全屏" 或 "退出全屏"
         const fsBtn = document.querySelector('[title="全屏"]') ||
             document.querySelector('[title="退出全屏"]') ||
             document.querySelector('mango-icon[name="fullscreen"]'); // 猜测的选择器
@@ -245,19 +244,18 @@
             if (node.offsetParent !== null) {
                 const text = node.innerText.trim();
                 // 排除已处理过的
-                if (text.endsWith('(F)')) continue; // 只排除 (F)，因为我们不再加 (D) 了
+                if (text.endsWith('(F)')) continue;
 
                 if (text === '全屏') {
                     node.innerText = '全屏 (F)';
                 } else if (text === '退出全屏') {
                     node.innerText = '退出全屏 (F)';
                 }
-                // 已移除：不再修改弹幕按钮文字
             }
         }
     }
 
-    const debouncedModifyTooltip = debounce(modifyFullscreenTooltip, 100); // 100ms 延迟，既流畅又省资源
+    const debouncedModifyTooltip = debounce(modifyFullscreenTooltip, 100); // 100ms 延迟
     document.addEventListener('mouseover', debouncedModifyTooltip);
 
     function init() {
@@ -483,7 +481,6 @@
                 // 合并去重
                 const combined = [...new Set([...current, ...newItems])];
 
-                // 仅更新输入框，不自动保存
                 document.getElementById('mgtv_blocklist_input').value = combined.join('\n');
                 this.showToast('导入成功，请点击保存生效');
             };
@@ -507,23 +504,14 @@
                 });
             });
 
-            // 观察 doc body，范围虽然大，但这在 SPA 中最稳妥。
-            // 也可以尝试只观察播放器，但播放器可能重建。body 是最稳的。
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
         checkAndBlock(node, isChild = false) {
-            // 如果节点本身是弹幕内容 span，或者包含该 class
-            // 用户提供的结构： <span class="_danmuText_1qow5_77">text</span>
-            // 这个 span 通常被包裹在 <div class="danmu-item"> 里。
-            // 我们需要找到这个 span，检查内容，然后隐藏它的**外层容器**（不然会留空白？）。
-            // 还是直接隐藏 span？如果隐藏 span，外层 div 还在，可能会有空行。建议隐藏外层。
-
             let textSpan = null;
             if (node.classList && node.classList.contains('_danmuText_1qow5_77')) {
                 textSpan = node;
             } else if (!isChild) {
-                // 如果 node 是外层容器，尝试在内部找
                 textSpan = node.querySelector ? node.querySelector('._danmuText_1qow5_77') : null;
             }
 
@@ -531,11 +519,6 @@
 
             const text = textSpan.innerText.trim();
             if (this.shouldBlock(text)) {
-                // 找到这一条弹幕的最外层容器进行隐藏
-                // 通常 span 的父级或爷级是定位元素
-                // 简单起见，隐藏 textSpan.parentNode (通常是 _danmuItem_...)
-                // 或者直接隐藏 textSpan，虽然可能留空，但最安全不误杀。
-                // 让我们尝试找一下父级，如果是 div 就隐藏父级。
                 const container = textSpan.closest('div') || textSpan;
                 container.style.display = 'none';
                 // console.log(`[AutoBlock] 已屏蔽弹幕: ${text}`);
@@ -588,7 +571,6 @@
     }
 
     // 优化：使用定时轮询代替点击事件监听，以更稳定地检测 URL 变化，避免频繁触发定时器
-    // 优化：使用定时轮询代替点击事件监听
     setInterval(() => {
         const currentUrl = window.location.href;
         if (currentUrl !== lastUrl) {
@@ -601,7 +583,6 @@
         if (!hasAutoClosedForCurrentUrl) {
             closeDanmu();
         }
-        // 持续尝试添加弹幕快捷键提示
         addDanmuShortcutTooltip();
     }, 1000);
 
@@ -639,7 +620,7 @@
     document.addEventListener('loadstart', resetAutoClose, true);
     document.addEventListener('emptied', resetAutoClose, true);
 
-    // 针对同页面切集产生的视频地址变化进行监听（强力补充）
+    // 针对同页面切集产生的视频地址变化进行监听
     const videoSrcObserver = new MutationObserver((mutations) => {
         mutations.forEach(mutation => {
             if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
