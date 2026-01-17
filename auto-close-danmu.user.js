@@ -244,8 +244,6 @@
     // 使用 mouseover + XPath 查找可见的 Tooltip 元素
     // 性能优化：使用 debounce 防抖，避免每次鼠标移动都触发昂贵的 XPath 查询
     function modifyFullscreenTooltip() {
-        // 查找所有包含 "全屏" 或 "退出全屏" 相关文本的元素
-        // v2.0.7 优化：仅精准匹配 "全屏" 文案，避免误伤其他按钮
         const xpath = "//*[text()='全屏']";
         // 尝试在全屏元素内查找（如果在全屏模式下），否则查找 body
         const contextNode = document.fullscreenElement || document.body;
@@ -532,7 +530,6 @@
                 }
             });
 
-            // 芒果TV 弹幕容器通常在播放器内部，这里观察 body 是为了应对 SPA 各种加载情况
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
