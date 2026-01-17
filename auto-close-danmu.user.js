@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.0.1
+// @version      2.0.6
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -19,6 +19,7 @@
     let networkErrorFlag = false;
     let lastUrl = window.location.href;
     let hasAutoClosedForCurrentUrl = false; // 防止重复自动关闭
+    let consecutiveOffCount = 0; // 连续检测到弹幕关闭的次数（用于确认稳定性）
 
     function createTooltip(text, direction = 'top') {
         const tooltip = document.createElement('div');
@@ -130,17 +131,28 @@
 
     function closeDanmu() {
         if (!autoCloseDanmu) return;
-        // 如果当前URL已经自动关闭过，不再重复关闭（避免用户手动开启后被误关）
+        // 如果已经确认稳定关闭，则跳过
         if (hasAutoClosedForCurrentUrl) return;
 
         const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208");
+
         if (danmuBtn) {
-            if (danmuBtn.classList.contains("_on_1qow5_238")) {
+            const isOn = danmuBtn.classList.contains("_on_1qow5_238");
+            if (isOn) {
+                // 如果是开启状态，执行关闭
                 danmuBtn.click();
-                console.log("弹幕已关闭");
+                // console.log("检测到弹幕开启，尝试自动关闭...");
+                // 只要有点开，就重置稳定性计数
+                consecutiveOffCount = 0;
+            } else {
+                // 如果目前是关闭状态，增加稳定性计数
+                consecutiveOffCount++;
+                // 只有连续 5 次（5秒）检测到都是关闭状态，才认为本集稳定处理完毕
+                if (consecutiveOffCount >= 5) {
+                    hasAutoClosedForCurrentUrl = true;
+                    // console.log("弹幕状态稳定（已连续5秒关闭），停止轮询检查");
+                }
             }
-            // 只要找到了按钮（无论是开还是关），说明已经处理过该集了
-            hasAutoClosedForCurrentUrl = true;
         }
     }
 
@@ -581,7 +593,8 @@
         const currentUrl = window.location.href;
         if (currentUrl !== lastUrl) {
             lastUrl = currentUrl;
-            hasAutoClosedForCurrentUrl = false; // 重置标记
+            hasAutoClosedForCurrentUrl = false;
+            consecutiveOffCount = 0; // 重置计数
             init();
         }
         // 如果当前页还没处理过自动关闭，则持续尝试（处理 SPA 异步加载延迟）
@@ -611,4 +624,43 @@
     }
 
     createToggleIconButton();
+
+    // 监听视频关键事件，处理同页面重载视频（URL 不变但视频重启）的情况
+    const resetAutoClose = (e) => {
+        if (e.target.tagName === 'VIDEO') {
+            // console.log(`检测到视频事件: ${e.type}，重置自动关闭状态`);
+            hasAutoClosedForCurrentUrl = false;
+            consecutiveOffCount = 0; // 重置计数
+            init();
+        }
+    };
+
+    document.addEventListener('play', resetAutoClose, true);
+    document.addEventListener('loadstart', resetAutoClose, true);
+    document.addEventListener('emptied', resetAutoClose, true);
+
+    // 针对同页面切集产生的视频地址变化进行监听（强力补充）
+    const videoSrcObserver = new MutationObserver((mutations) => {
+        mutations.forEach(mutation => {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
+                // console.log("检测到视频源变化，重置自动关闭状态");
+                hasAutoClosedForCurrentUrl = false;
+                consecutiveOffCount = 0; // 重置计数
+                init();
+            }
+        });
+    });
+
+    let currentObservedVideo = null;
+    function startObserveVideo() {
+        const video = document.querySelector('video');
+        if (video && video !== currentObservedVideo) {
+            currentObservedVideo = video;
+            videoSrcObserver.disconnect();
+            videoSrcObserver.observe(video, { attributes: true, attributeFilter: ['src'] });
+        }
+    }
+
+    // 每秒检查一下是否需要给新的 video 元素挂载监听
+    setInterval(startObserveVideo, 2000);
 })();
