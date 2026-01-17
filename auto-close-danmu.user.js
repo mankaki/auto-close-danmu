@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.0.8
+// @version      2.1.0
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -153,10 +153,12 @@
     }
 
     function toggleDanmu() {
-        const btn = document.querySelector("._danmuSwitcher_1qow5_208");
+        const btn = document.querySelector("._danmuSwitcher_1qow5_208") ||
+            document.querySelector(".danmu-switch");
         if (btn) {
+            isManualIntervention = true; // 既然是用户通过快捷键操作，记录为手动干预
             btn.click();
-            console.log("快捷键切换弹幕");
+            console.log("快捷键切换弹幕，停止本集自动关闭流程");
         }
     }
 
@@ -281,8 +283,23 @@
         constructor() {
             this.storageKey = 'mgtv_custom_blocklist';
             this.blocklist = this.load();
+            this.compiledPatterns = this.compile(this.blocklist); // 预编译正则表达式
             this.initUI();
             this.startFilter();
+        }
+
+        compile(list) {
+            return list.map(pattern => {
+                const regexMatch = pattern.match(/^\/(.*?)\/([gimuy]*)$/);
+                if (regexMatch) {
+                    try {
+                        return new RegExp(regexMatch[1], regexMatch[2]);
+                    } catch (e) {
+                        return pattern;
+                    }
+                }
+                return pattern;
+            });
         }
 
         load() {
@@ -295,6 +312,7 @@
 
         save(list) {
             this.blocklist = list;
+            this.compiledPatterns = this.compile(list); // 保存时同步更新预编译列表
             localStorage.setItem(this.storageKey, JSON.stringify(list));
             // 立即刷新过滤（可选，这里暂不处理已存在的弹幕，仅对新弹幕生效）
         }
@@ -501,54 +519,54 @@
         startFilter() {
             // 使用 MutationObserver 监听弹幕节点
             const observer = new MutationObserver((mutations) => {
-                mutations.forEach(mutation => {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === 1) { // 元素
+                // 性能优化：批量处理 mutations
+                for (let i = 0; i < mutations.length; i++) {
+                    const addedNodes = mutations[i].addedNodes;
+                    for (let j = 0; j < addedNodes.length; j++) {
+                        const node = addedNodes[j];
+                        if (node.nodeType === 1) { // 元素节点
+                            // 如果节点本身就是弹幕 span 或者包含了它
                             this.checkAndBlock(node);
-                            // 递归检查子元素
-                            const descendants = node.querySelectorAll('._danmuText_1qow5_77');
-                            descendants.forEach(child => this.checkAndBlock(child, true));
                         }
-                    });
-                });
+                    }
+                }
             });
 
+            // 芒果TV 弹幕容器通常在播放器内部，这里观察 body 是为了应对 SPA 各种加载情况
             observer.observe(document.body, { childList: true, subtree: true });
         }
 
-        checkAndBlock(node, isChild = false) {
-            let textSpan = null;
+        checkAndBlock(node) {
+            // 快速检查：如果节点本身是 span
             if (node.classList && node.classList.contains('_danmuText_1qow5_77')) {
-                textSpan = node;
-            } else if (!isChild) {
-                textSpan = node.querySelector ? node.querySelector('._danmuText_1qow5_77') : null;
+                this.performBlock(node);
+                return;
             }
+            // 否则尝试在子节点中寻找一次（不进行深度递归，仅一级 querySelector）
+            const textSpan = node.querySelector ? node.querySelector('._danmuText_1qow5_77') : null;
+            if (textSpan) {
+                this.performBlock(textSpan);
+            }
+        }
 
-            if (!textSpan) return;
-
+        performBlock(textSpan) {
             const text = textSpan.innerText.trim();
             if (this.shouldBlock(text)) {
+                // 尝试隐藏最外层容器（通常是 ._danmuItem...），如果找不到就隐藏 span 本身
+                // 使用 closest 可以更精准地找到弹幕条目
                 const container = textSpan.closest('div') || textSpan;
                 container.style.display = 'none';
-                // console.log(`[AutoBlock] 已屏蔽弹幕: ${text}`);
             }
         }
 
         shouldBlock(text) {
-            if (!this.blocklist || this.blocklist.length === 0) return false;
+            if (!this.compiledPatterns || this.compiledPatterns.length === 0) return false;
 
-            for (const pattern of this.blocklist) {
-                // 检查是否是正则格式 /.../flags
-                const regexMatch = pattern.match(/^\/(.*?)\/([gimuy]*)$/);
-                if (regexMatch) {
-                    try {
-                        const regex = new RegExp(regexMatch[1], regexMatch[2]);
-                        if (regex.test(text)) return true;
-                    } catch (e) {
-                        // console.warn('Invalid Regex in blocklist:', pattern);
-                    }
+            for (const pattern of this.compiledPatterns) {
+                if (pattern instanceof RegExp) {
+                    if (pattern.test(text)) return true;
                 } else {
-                    // 普通文本匹配 (包含)
+                    // 普通文本匹配
                     if (text.includes(pattern)) return true;
                 }
             }
