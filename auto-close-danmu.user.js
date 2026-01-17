@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.1.1
+// @version      2.1.3
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -19,6 +19,7 @@
     let networkErrorFlag = false;
     let lastUrl = window.location.href;
     let isManualIntervention = false; // 标记用户本集是否手动干预过（手动开启或关闭）
+    let lastManualTime = 0; // 上次手动操作的时间戳，用于冷却锁定
     let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
 
     function createTooltip(text, direction = 'top') {
@@ -134,6 +135,9 @@
         // 如果用户本集手动操作过，脚本不再干预
         if (isManualIntervention) return;
 
+        // v2.1.2：如果 5 秒内进行过手动操作，坚决不进行自动关闭（防止竞速冲突）
+        if (Date.now() - lastManualTime < 5000) return;
+
         const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208") ||
             document.querySelector(".danmu-switch"); // 增加备选选择器
 
@@ -156,9 +160,10 @@
         const btn = document.querySelector("._danmuSwitcher_1qow5_208") ||
             document.querySelector(".danmu-switch");
         if (btn) {
-            isManualIntervention = true; // 既然是用户通过快捷键操作，记录为手动干预
+            isManualIntervention = true;
+            lastManualTime = Date.now(); // 记录手动时间戳
             btn.click();
-            console.log("快捷键切换弹幕，停止本集自动关闭流程");
+            console.log("快捷键切换弹幕，触发 5s 强制停火锁定");
         }
     }
 
@@ -225,9 +230,10 @@
             e.target.closest(".danmu-switch");
 
         if (isDanmuBtn) {
-            // 用户手动点击了开关，记录为手动干预
+            // 用户手动点击了开关，记录为手动干预及时间戳
             isManualIntervention = true;
-            // console.log("检测到用户手动操作，本集不再自动关弹幕");
+            lastManualTime = Date.now();
+            // console.log("检测到用户手动操作，触发 5s 强制停火锁定");
         }
     }, true);
 
@@ -515,22 +521,36 @@
 
         // --- 过滤核心逻辑 ---
         startFilter() {
-            // 使用 MutationObserver 监听弹幕节点
-            const observer = new MutationObserver((mutations) => {
-                // 性能优化：批量处理 mutations
+            this.container = null;
+            this.observer = new MutationObserver((mutations) => {
                 for (let i = 0; i < mutations.length; i++) {
                     const addedNodes = mutations[i].addedNodes;
                     for (let j = 0; j < addedNodes.length; j++) {
                         const node = addedNodes[j];
-                        if (node.nodeType === 1) { // 元素节点
-                            // 如果节点本身就是弹幕 span 或者包含了它
+                        if (node.nodeType === 1) {
                             this.checkAndBlock(node);
                         }
                     }
                 }
             });
 
-            observer.observe(document.body, { childList: true, subtree: true });
+            this.reAnchorObserver();
+        }
+
+        // 性能核心：尝试寻找精准的弹幕容器进行监听，若找不到则回退到 body
+        reAnchorObserver() {
+            // 芒果TV 弹幕通常渲染在特定的容器内，通过探测找到它
+            // 常见的可能容器类名（基于历史观察）
+            const target = document.querySelector(".m-danmu-container") ||
+                document.querySelector(".danmu-container") ||
+                document.body;
+
+            if (this.container !== target) {
+                if (this.observer) this.observer.disconnect();
+                this.container = target;
+                this.observer.observe(target, { childList: true, subtree: true });
+                // console.log(`[Performance] 过滤引擎观测点已切换至: ${target === document.body ? 'body (兜底)' : target.className}`);
+            }
         }
 
         checkAndBlock(node) {
@@ -582,6 +602,12 @@
         }
     };
 
+    // 提取芒果TV视频ID，用于精准判断切集
+    function getMgtvVideoId(url) {
+        const match = url.match(/\/b\/\d+\/(\d+)\.html/);
+        return match ? match[1] : url;
+    }
+
     const playerElement = document.querySelector(".mango-player.p-MacIntel.player-s");
     if (playerElement) {
         playerElement.addEventListener('click', () => {
@@ -597,18 +623,23 @@
     // 优化：使用定时轮询代替点击事件监听，以更稳定地检测 URL 变化，避免频繁触发定时器
     setInterval(() => {
         const currentUrl = window.location.href;
-        if (currentUrl !== lastUrl) {
+        if (getMgtvVideoId(currentUrl) !== getMgtvVideoId(lastUrl)) {
             lastUrl = currentUrl;
-            isManualIntervention = false; // 重置手动干预标记
+            isManualIntervention = false;
+            lastManualTime = 0; // 在切集时清除锁定
             init();
         }
         // v2.0.8：只要没被手动干预过，就始终尝试关闭（处理异步反复开启的情况）
         if (autoCloseDanmu && !isManualIntervention) {
             closeDanmu();
         }
+        // v2.1.3：持续尝试优化过滤引擎的观测点
+        if (window.blocklistManager) {
+            window.blocklistManager.reAnchorObserver();
+        }
         // 持续尝试添加弹幕快捷键提示
         addDanmuShortcutTooltip();
-    }, 500);
+    }, 1000); // v2.1.3 调低至 1s 一次，极致省电
 
     // 防抖函数，避免频繁触发
     function debounce(func, wait) {
@@ -632,8 +663,10 @@
 
     // 监听视频关键事件，处理同页面重载视频（URL 不变但视频重启）的情况
     const resetAutoClose = (e) => {
+        // v2.1.2：如果在手动操作锁定期内，忽略事件触发的重置
+        if (Date.now() - lastManualTime < 5000) return;
+
         if (e.target.tagName === 'VIDEO') {
-            // console.log(`检测到视频事件: ${e.type}，重置自动关闭状态`);
             isManualIntervention = false;
             init();
         }
@@ -645,9 +678,11 @@
 
     // 针对同页面切集产生的视频地址变化进行监听
     const videoSrcObserver = new MutationObserver((mutations) => {
+        // v2.1.2：如果在手动操作锁定期内，忽略 SRC 变化的重置
+        if (Date.now() - lastManualTime < 5000) return;
+
         mutations.forEach(mutation => {
             if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
-                // console.log("检测到视频源变化，重置自动关闭状态");
                 isManualIntervention = false;
                 init();
             }
