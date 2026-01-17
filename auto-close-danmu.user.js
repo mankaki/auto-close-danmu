@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.1.0
+// @version      2.1.1
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -639,7 +639,7 @@
         }
     };
 
-    document.addEventListener('play', resetAutoClose, true);
+    // document.addEventListener('play', resetAutoClose, true); // v2.1.1 移除 play 监听，避免暂停恢复导致手动覆盖失效
     document.addEventListener('loadstart', resetAutoClose, true);
     document.addEventListener('emptied', resetAutoClose, true);
 
