@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -133,13 +133,13 @@
         // 如果当前URL已经自动关闭过，不再重复关闭（避免用户手动开启后被误关）
         if (hasAutoClosedForCurrentUrl) return;
 
-        const danmuButtonOn = document.querySelector("._danmuSwitcher_1qow5_208._on_1qow5_238");
-        if (danmuButtonOn) {
-            danmuButtonOn.click();
-            console.log("弹幕已关闭");
-            hasAutoClosedForCurrentUrl = true;
-        } else {
-            // 如果已经是关闭状态，也标记为已处理
+        const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208");
+        if (danmuBtn) {
+            if (danmuBtn.classList.contains("_on_1qow5_238")) {
+                danmuBtn.click();
+                console.log("弹幕已关闭");
+            }
+            // 只要找到了按钮（无论是开还是关），说明已经处理过该集了
             hasAutoClosedForCurrentUrl = true;
         }
     }
@@ -584,6 +584,10 @@
             hasAutoClosedForCurrentUrl = false; // 重置标记
             init();
         }
+        // 如果当前页还没处理过自动关闭，则持续尝试（处理 SPA 异步加载延迟）
+        if (!hasAutoClosedForCurrentUrl) {
+            closeDanmu();
+        }
         // 持续尝试添加弹幕快捷键提示
         addDanmuShortcutTooltip();
     }, 1000);
@@ -597,7 +601,7 @@
         };
     }
 
-    const debouncedInit = debounce(init, 3000);
+    const debouncedInit = debounce(init, 1000);
 
     const titleObserver = new MutationObserver(debouncedInit);
 
