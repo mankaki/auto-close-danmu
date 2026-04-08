@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.1.3
+// @version      2.1.4
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -16,14 +16,20 @@
     'use strict';
 
     let autoCloseDanmu = JSON.parse(localStorage.getItem('autoCloseDanmu')) ?? true;
-    let networkErrorFlag = false;
+    let blocklistManagerInstance = null;
     let lastUrl = window.location.href;
     let isManualIntervention = false; // 标记用户本集是否手动干预过（手动开启或关闭）
     let lastManualTime = 0; // 上次手动操作的时间戳，用于冷却锁定
     let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
 
+    function clearOldTooltips() {
+        const oldTooltips = document.querySelectorAll('.mgtv-custom-tooltip');
+        oldTooltips.forEach(t => t.remove());
+    }
+
     function createTooltip(text, direction = 'top') {
         const tooltip = document.createElement('div');
+        tooltip.className = 'mgtv-custom-tooltip';
         tooltip.innerText = text;
         tooltip.style.position = 'fixed';
         tooltip.style.padding = '6px 10px';
@@ -66,8 +72,8 @@
                 tooltip.style.left = `${rect.left}px`;
                 tooltip.style.top = `${rect.top + rect.height / 2}px`;
             } else {
-                tooltip.style.left = `${rect.left + rect.width / 2}px`;
-                tooltip.style.top = `${rect.top}px`;
+                this.tooltip.style.left = `${rect.left + rect.width / 2}px`;
+                this.tooltip.style.top = `${rect.top}px`;
             }
             tooltip.style.opacity = '1';
         });
@@ -246,13 +252,18 @@
         });
     }
 
-    // 监听动态添加的 DOM 节点（用于捕获自定义 Tooltip）
-    // 使用 mouseover + XPath 查找可见的 Tooltip 元素
-    // 性能优化：使用 debounce 防抖，避免每次鼠标移动都触发昂贵的 XPath 查询
+    // 尝试修改全屏按钮 tooltip。去除 mouseover 监听，放入低频 interval 以节省性能
     function modifyFullscreenTooltip() {
-        const xpath = "//*[text()='全屏']";
-        // 尝试在全屏元素内查找（如果在全屏模式下），否则查找 body
         const contextNode = document.fullscreenElement || document.body;
+        
+        // 1. 尝试直接修改带有 title 属性的按钮
+        const fsBtns = contextNode.querySelectorAll('[title="全屏"]');
+        fsBtns.forEach(btn => {
+            btn.title = '全屏 (F)';
+        });
+
+        // 2. 备用策略：保留查找“全屏”文本元素的逻辑
+        const xpath = "//*[text()='全屏']";
         const result = document.evaluate(xpath, contextNode, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
 
         for (let i = 0; i < result.snapshotLength; i++) {
@@ -260,9 +271,6 @@
             // 检查元素是否可见 (offsetParent 不为 null 代表可见)
             if (node.offsetParent !== null) {
                 const text = node.innerText.trim();
-                // 排除已处理过的
-                if (text.endsWith('(F)')) continue;
-
                 if (text === '全屏') {
                     node.innerText = '全屏 (F)';
                 }
@@ -270,15 +278,13 @@
         }
     }
 
-    const debouncedModifyTooltip = debounce(modifyFullscreenTooltip, 100); // 100ms 延迟
-    document.addEventListener('mouseover', debouncedModifyTooltip);
-
     function init() {
+        clearOldTooltips();
         closeDanmu();
         addDanmuShortcutTooltip();
         // 初始化屏蔽词管理器
-        if (!window.blocklistManager) {
-            window.blocklistManager = new BlocklistManager();
+        if (!blocklistManagerInstance) {
+            blocklistManagerInstance = new BlocklistManager();
         }
     }
 
@@ -375,9 +381,9 @@
             // Shield Icon SVG
             btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path d="M15.273 19.469c-.662-.662-1.582-1.002-2.514-.931-1.767.137-3.58-.47-4.931-1.821-1.223-1.224-1.83-2.824-1.83-4.426 0-.604.086-1.208.258-1.792l3.771 3.771c1.912.417 4.652-2.353 4.242-4.242l-3.769-3.771c.583-.171 1.187-.257 1.790-.257 1.603 0 3.202.606 4.428 1.83 1.35 1.351 1.957 3.164 1.82 4.93-.072.933.268 1.853.93 2.514l2.843 2.843c1.066-1.793 1.689-3.88 1.689-6.117 0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12c2.236 0 4.323-.623 6.115-1.688l-2.842-2.843z"/></svg>`;
 
-            btn.onclick = () => this.openModal();
-            btn.onmouseenter = () => btn.style.transform = 'scale(1.1)';
-            btn.onmouseleave = () => btn.style.transform = 'scale(1)';
+            btn.addEventListener('click', () => this.openModal());
+            btn.addEventListener('mouseenter', () => btn.style.transform = 'scale(1.1)');
+            btn.addEventListener('mouseleave', () => btn.style.transform = 'scale(1)');
 
             document.body.appendChild(btn);
 
@@ -444,20 +450,20 @@
 
             // 绑定事件
             const close = () => modal.style.display = 'none';
-            content.querySelector('#mgtv_modal_close').onclick = close;
-            content.querySelector('#mgtv_btn_cancel').onclick = close;
-            content.querySelector('#mgtv_btn_save').onclick = () => this.saveFromUI();
-            content.querySelector('#mgtv_btn_export').onclick = () => this.exportToFile();
+            content.querySelector('#mgtv_modal_close').addEventListener('click', close);
+            content.querySelector('#mgtv_btn_cancel').addEventListener('click', close);
+            content.querySelector('#mgtv_btn_save').addEventListener('click', () => this.saveFromUI());
+            content.querySelector('#mgtv_btn_export').addEventListener('click', () => this.exportToFile());
 
             const importBtn = content.querySelector('#mgtv_btn_import');
-            importBtn.onclick = () => document.getElementById('mgtv_file_input').click();
+            importBtn.addEventListener('click', () => document.getElementById('mgtv_file_input').click());
 
-            document.getElementById('mgtv_file_input').onchange = (e) => this.importFromFile(e);
+            document.getElementById('mgtv_file_input').addEventListener('change', (e) => this.importFromFile(e));
 
             // 按钮 Hover 效果
             const addBtnHover = (btn, hoverBg, normalBg = 'transparent') => {
-                btn.onmouseenter = () => btn.style.backgroundColor = hoverBg;
-                btn.onmouseleave = () => btn.style.backgroundColor = normalBg;
+                btn.addEventListener('mouseenter', () => btn.style.backgroundColor = hoverBg);
+                btn.addEventListener('mouseleave', () => btn.style.backgroundColor = normalBg);
             };
 
             addBtnHover(content.querySelector('#mgtv_btn_save'), '#E55500', '#FF5F00');
@@ -470,8 +476,8 @@
 
             // 简单的Textarea focus样式
             const ta = document.getElementById('mgtv_blocklist_input');
-            ta.onfocus = () => ta.style.borderColor = '#FF5F00';
-            ta.onblur = () => ta.style.borderColor = '#ddd';
+            ta.addEventListener('focus', () => ta.style.borderColor = '#FF5F00');
+            ta.addEventListener('blur', () => ta.style.borderColor = '#ddd');
         }
 
         openModal() {
@@ -578,6 +584,8 @@
 
         shouldBlock(text) {
             if (!this.compiledPatterns || this.compiledPatterns.length === 0) return false;
+            // 限制字数以防止正则灾难性回溯 (ReDoS) 过度消耗性能
+            if (text.length > 500) return false;
 
             for (const pattern of this.compiledPatterns) {
                 if (pattern instanceof RegExp) {
@@ -593,31 +601,10 @@
 
     window.addEventListener('load', init);
 
-    const originalConsoleError = console.error;
-    console.error = function (...args) {
-        originalConsoleError.apply(console, args);
-        if (args.some(arg => typeof arg === 'string' && /^Ne/.test(arg))) {
-            networkErrorFlag = true;
-            closeDanmu();
-        }
-    };
-
     // 提取芒果TV视频ID，用于精准判断切集
     function getMgtvVideoId(url) {
         const match = url.match(/\/b\/\d+\/(\d+)\.html/);
         return match ? match[1] : url;
-    }
-
-    const playerElement = document.querySelector(".mango-player.p-MacIntel.player-s");
-    if (playerElement) {
-        playerElement.addEventListener('click', () => {
-            if (autoCloseDanmu && networkErrorFlag) {
-                setTimeout(() => {
-                    closeDanmu();
-                    networkErrorFlag = false;
-                }, 3000);
-            }
-        });
     }
 
     // 优化：使用定时轮询代替点击事件监听，以更稳定地检测 URL 变化，避免频繁触发定时器
@@ -633,12 +620,16 @@
         if (autoCloseDanmu && !isManualIntervention) {
             closeDanmu();
         }
-        // v2.1.3：持续尝试优化过滤引擎的观测点
-        if (window.blocklistManager) {
-            window.blocklistManager.reAnchorObserver();
+        // 持续尝试优化过滤引擎的观测点
+        if (blocklistManagerInstance) {
+            blocklistManagerInstance.reAnchorObserver();
         }
-        // 持续尝试添加弹幕快捷键提示
+        // 尝试更新全屏 tooltip 并且添加弹幕快捷键提示
+        modifyFullscreenTooltip();
         addDanmuShortcutTooltip();
+        
+        // 顺势检查需要重新监听的 video 元素
+        startObserveVideo();
     }, 1000); // v2.1.3 调低至 1s 一次，极致省电
 
     // 防抖函数，避免频繁触发
@@ -698,7 +689,4 @@
             videoSrcObserver.observe(video, { attributes: true, attributeFilter: ['src'] });
         }
     }
-
-    // 每秒检查一下是否需要给新的 video 元素挂载监听
-    setInterval(startObserveVideo, 2000);
 })();
