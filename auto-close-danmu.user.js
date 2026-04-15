@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.1.4
-// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）
+// @version      2.2.0
+// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播
 // @author       mankaki
 // @match        *://www.mgtv.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
@@ -72,8 +72,8 @@
                 tooltip.style.left = `${rect.left}px`;
                 tooltip.style.top = `${rect.top + rect.height / 2}px`;
             } else {
-                this.tooltip.style.left = `${rect.left + rect.width / 2}px`;
-                this.tooltip.style.top = `${rect.top}px`;
+                tooltip.style.left = `${rect.left + rect.width / 2}px`;
+                tooltip.style.top = `${rect.top}px`;
             }
             tooltip.style.opacity = '1';
         });
@@ -278,10 +278,162 @@
         }
     }
 
+    // --- 视频列表名称自动换行 ---
+    function injectEpisodeTitleWrapStyle() {
+        if (document.getElementById('mgtv_episode_wrap_style')) return;
+        const style = document.createElement('style');
+        style.id = 'mgtv_episode_wrap_style';
+        style.textContent = `
+            span.name {
+                white-space: normal !important;
+                overflow: visible !important;
+                text-overflow: unset !important;
+                word-break: break-word !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    // --- 播放列表 Tab 记忆 & 跨月自动连播 ---
+    function getMgtvCid() {
+        const match = window.location.href.match(/\/b\/(\d+)\//);
+        return match ? match[1] : null;
+    }
+
+    // 页面加载时强制切到"往期正片"
+    let tabRestored = false;
+    function restoreTab() {
+        if (tabRestored) return;
+        const cid = getMgtvCid();
+        if (!cid) return;
+
+        const tabs = document.querySelectorAll('.show-tabs .tab');
+        if (!tabs.length) return;
+
+        // 找到"往期正片"Tab
+        let targetTab = null;
+        for (let i = 0; i < tabs.length; i++) {
+            const a = tabs[i].querySelector('a');
+            if (a && a.textContent.trim() === '往期正片') {
+                targetTab = tabs[i];
+                break;
+            }
+        }
+        if (!targetTab) return;
+
+        // 如果已经在"往期正片"或"精彩花絮"，不切换
+        const currentFocusA = document.querySelector('.show-tabs .tab.focus a');
+        const currentText = currentFocusA ? currentFocusA.textContent.trim() : '';
+        if (currentText === '往期正片' || currentText === '精彩花絮') { tabRestored = true; return; }
+
+        // 尝试多种点击方式触发 Vue/框架事件
+        const link = targetTab.querySelector('a');
+        if (link) link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        targetTab.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        // 不设 tabRestored = true，下次轮询会再检查 focus 是否真正生效
+    }
+
+    // 跨月自动连播：监听视频结束事件，当前月份列表播完后切到下一个月
+    let endedListenerAttached = false;
+    let isLastInMonth = false; // 标记当前是否为本月最后一集
+
+    function attachEndedListener() {
+        if (endedListenerAttached) return;
+
+        // 持续检测当前是否为本月最后一集
+        setInterval(checkIfLastInMonth, 2000);
+
+        // 核心策略：用 timeupdate 监听视频进度，在最后一集快结束时（剩余 < 1s）抢先暂停
+        // 阻止芒果TV自带连播跳到其他节目，然后由我们执行跨月切换
+        document.addEventListener('timeupdate', (e) => {
+            if (e.target.tagName !== 'VIDEO') return;
+            if (!isLastInMonth) return;
+
+            const video = e.target;
+            if (!video.duration || !isFinite(video.duration)) return;
+            const remaining = video.duration - video.currentTime;
+
+            if (remaining < 1 && remaining > 0 && !video.paused) {
+                video.pause();
+
+                const focusTab = document.querySelector('.show-tabs .tab.focus a');
+                if (!focusTab || focusTab.textContent.trim() !== '往期正片') return;
+
+                handleCrossMonthPlay();
+            }
+        }, true);
+
+        endedListenerAttached = true;
+    }
+
+    function checkIfLastInMonth() {
+        const focusTab = document.querySelector('.show-tabs .tab.focus a');
+        if (!focusTab || focusTab.textContent.trim() !== '往期正片') {
+            isLastInMonth = false;
+            return;
+        }
+        const videoList = document.querySelector('[node-type="positive-videolist"] .aside-videolist');
+        if (!videoList) { isLastInMonth = false; return; }
+
+        const items = Array.from(videoList.querySelectorAll('li[data-vid]'));
+        const playingItem = videoList.querySelector('li.playing');
+        if (!playingItem || !items.length) { isLastInMonth = false; return; }
+
+        isLastInMonth = items.indexOf(playingItem) === items.length - 1;
+    }
+
+    let crossMonthSwitching = false; // 防止 timeupdate 高频触发导致重复切换
+
+    function handleCrossMonthPlay() {
+        if (crossMonthSwitching) return;
+        crossMonthSwitching = true;
+
+        // 尝试切到下一个月
+        const months = Array.from(document.querySelectorAll('.time-select-months a.month.scroll-item'));
+        if (!months.length) { crossMonthSwitching = false; return; }
+
+        const currentMonth = document.querySelector('.time-select-months a.month.month-focus');
+        if (!currentMonth) { crossMonthSwitching = false; return; }
+
+        const currentMonthIndex = months.indexOf(currentMonth);
+        // 月份列表是倒序排列的（04月、03月、02月、01月），所以"下一个月"是 index - 1
+        const nextMonthIndex = currentMonthIndex - 1;
+
+        if (nextMonthIndex < 0) {
+            // 已经是最新月份，没有下一个月了，暂停视频防止跳转到其他节目
+            const video = document.querySelector('video');
+            if (video) video.pause();
+            crossMonthSwitching = false;
+            return;
+        }
+
+        const nextMonth = months[nextMonthIndex];
+
+        // 点击下一个月份标签
+        nextMonth.click();
+
+        // 等待列表加载后，点击第一集
+        setTimeout(() => {
+            const newVideoList = document.querySelector('[node-type="positive-videolist"] .aside-videolist');
+            if (!newVideoList) return;
+            const firstItem = newVideoList.querySelector('li[data-vid] a');
+            if (firstItem) {
+                firstItem.click();
+            }
+        }, 800);
+    }
+
+    function initPlaylistEnhance() {
+        restoreTab();
+        attachEndedListener();
+    }
+
     function init() {
         clearOldTooltips();
         closeDanmu();
         addDanmuShortcutTooltip();
+        injectEpisodeTitleWrapStyle(); // 注入视频列表名称自动换行样式
+        initPlaylistEnhance(); // 播放列表 Tab 记忆 & 跨月连播
         // 初始化屏蔽词管理器
         if (!blocklistManagerInstance) {
             blocklistManagerInstance = new BlocklistManager();
@@ -418,7 +570,6 @@
             const btnStyle = `padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; border: none; outline: none; transition: all 0.2s;`;
             const primaryBtnStyle = `${btnStyle} background: #FF5F00; color: #fff;`;
             const secondaryBtnStyle = `${btnStyle} background: transparent; color: #666; margin-right: 8px;`;
-            const textBtnStyle = `${btnStyle} background: transparent; color: #222; text-decoration: underline; padding: 6px 4px;`;
 
             content.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
@@ -614,8 +765,12 @@
             lastUrl = currentUrl;
             isManualIntervention = false;
             lastManualTime = 0; // 在切集时清除锁定
+            tabRestored = false; // 切集后允许再次恢复 Tab
+            crossMonthSwitching = false; // 重置跨月切换锁
             init();
         }
+        // 持续尝试恢复 Tab（DOM 可能延迟加载）
+        if (!tabRestored) restoreTab();
         // v2.0.8：只要没被手动干预过，就始终尝试关闭（处理异步反复开启的情况）
         if (autoCloseDanmu && !isManualIntervention) {
             closeDanmu();
