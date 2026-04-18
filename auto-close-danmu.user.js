@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.2.0
+// @version      2.3.0
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -15,7 +15,16 @@
 (function () {
     'use strict';
 
-    let autoCloseDanmu = JSON.parse(localStorage.getItem('autoCloseDanmu')) ?? true;
+    function loadAutoCloseDanmuSetting() {
+        try {
+            const storedValue = localStorage.getItem('autoCloseDanmu');
+            return storedValue === null ? true : JSON.parse(storedValue);
+        } catch (e) {
+            return true;
+        }
+    }
+
+    let autoCloseDanmu = loadAutoCloseDanmuSetting();
     let blocklistManagerInstance = null;
     let lastUrl = window.location.href;
     let isManualIntervention = false; // 标记用户本集是否手动干预过（手动开启或关闭）
@@ -23,6 +32,15 @@
     let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
 
     function clearOldTooltips() {
+        const tooltipButtons = document.querySelectorAll('[data-mgtv-tooltip-attached]');
+        tooltipButtons.forEach(button => {
+            if (button._tooltipCleanup) {
+                button._tooltipCleanup();
+            } else {
+                delete button.dataset.mgtvTooltipAttached;
+            }
+        });
+
         const oldTooltips = document.querySelectorAll('.mgtv-custom-tooltip');
         oldTooltips.forEach(t => t.remove());
     }
@@ -53,13 +71,17 @@
     }
 
     function addTooltip(button, text, direction) {
-        if (!button || button.dataset.tooltipAttached) return;
-        button.dataset.tooltipAttached = 'true';
+        if (!button) return;
+        if (button._tooltipCleanup) {
+            button._tooltipCleanup();
+        }
+        if (button.dataset.mgtvTooltipAttached) return;
+        button.dataset.mgtvTooltipAttached = 'true';
 
         const tooltip = createTooltip(text, direction);
         document.body.appendChild(tooltip);
 
-        button.addEventListener('mouseenter', () => {
+        const handleMouseEnter = () => {
             // 全屏模式下，必须将 Tooltip 移动到全屏元素内部，否则会被遮挡
             const container = document.fullscreenElement || document.body;
             if (tooltip.parentNode !== container) {
@@ -76,11 +98,21 @@
                 tooltip.style.top = `${rect.top}px`;
             }
             tooltip.style.opacity = '1';
-        });
+        };
 
-        button.addEventListener('mouseleave', () => {
+        const handleMouseLeave = () => {
             tooltip.style.opacity = '0';
-        });
+        };
+
+        button.addEventListener('mouseenter', handleMouseEnter);
+        button.addEventListener('mouseleave', handleMouseLeave);
+        button._tooltipCleanup = () => {
+            button.removeEventListener('mouseenter', handleMouseEnter);
+            button.removeEventListener('mouseleave', handleMouseLeave);
+            tooltip.remove();
+            delete button.dataset.mgtvTooltipAttached;
+            button._tooltipCleanup = null;
+        };
     }
 
     function createToggleIconButton() {
@@ -246,7 +278,7 @@
     function addDanmuShortcutTooltip() {
         const danmuButtons = document.querySelectorAll("._danmuSwitcher_1qow5_208");
         danmuButtons.forEach(btn => {
-            if (!btn || btn.dataset.tooltipAttached) return;
+            if (!btn || btn.dataset.mgtvTooltipAttached) return;
             // 使用默认上方 tooltip
             addTooltip(btn, "💡 按 D 键可开关弹幕", 'top');
         });
@@ -343,32 +375,75 @@
         // 持续检测当前是否为本月最后一集
         setInterval(checkIfLastInMonth, 2000);
 
-        // 核心策略：用 timeupdate 监听视频进度，在最后一集快结束时（剩余 < 1s）抢先暂停
-        // 阻止芒果TV自带连播跳到其他节目，然后由我们执行跨月切换
+        // 核心策略：在最后一集即将结束前提前准备跨月切换，仅在目标列表就绪后再暂停当前视频
         document.addEventListener('timeupdate', (e) => {
             if (e.target.tagName !== 'VIDEO') return;
-            if (!isLastInMonth) return;
 
             const video = e.target;
             if (!video.duration || !isFinite(video.duration)) return;
             const remaining = video.duration - video.currentTime;
+            const currentVideoId = getMgtvVideoId(window.location.href);
+            const isOnPositiveTab = isPositiveTabActive();
+            const hasPreparedCrossMonthTarget = crossMonthReadyVideoId === currentVideoId && !!crossMonthReadyTargetVid;
+            const readyTargetLink = hasPreparedCrossMonthTarget ? getReadyTargetLink() : null;
 
-            if (remaining < 1 && remaining > 0 && !video.paused) {
+            if (hasPreparedCrossMonthTarget && remaining < 1 && remaining > 0) {
+                if (!isOnPositiveTab) {
+                    crossMonthBlockAutoplayVideoId = null;
+                    resetCrossMonthReadyState();
+                    finishCrossMonthSwitch();
+                    return;
+                }
+                if (!readyTargetLink) {
+                    resetCrossMonthReadyState();
+                    crossMonthSwitching = false;
+                    if (!video.paused) {
+                        handleCrossMonthPlay(video, currentVideoId);
+                    }
+                    return;
+                }
+                if (!video.paused) {
+                    video.pause();
+                }
+                readyTargetLink.click();
+                crossMonthFailedVideoId = null;
+                crossMonthBlockAutoplayVideoId = null;
+                resetCrossMonthReadyState();
+                finishCrossMonthSwitch();
+                return;
+            }
+
+            if (!isOnPositiveTab) {
+                if (crossMonthBlockAutoplayVideoId === currentVideoId || hasPreparedCrossMonthTarget) {
+                    crossMonthBlockAutoplayVideoId = null;
+                    resetCrossMonthReadyState();
+                    finishCrossMonthSwitch();
+                }
+                return;
+            }
+
+            if (crossMonthBlockAutoplayVideoId === currentVideoId && remaining < 1 && remaining > 0 && !video.paused) {
                 video.pause();
+                return;
+            }
 
-                const focusTab = document.querySelector('.show-tabs .tab.focus a');
-                if (!focusTab || focusTab.textContent.trim() !== '往期正片') return;
+            if (!isLastInMonth) return;
 
-                handleCrossMonthPlay();
+            if (remaining < 3 && remaining > 0 && !crossMonthSwitching && !hasPreparedCrossMonthTarget && crossMonthFailedVideoId !== currentVideoId) {
+                handleCrossMonthPlay(video, currentVideoId);
             }
         }, true);
 
         endedListenerAttached = true;
     }
 
-    function checkIfLastInMonth() {
+    function isPositiveTabActive() {
         const focusTab = document.querySelector('.show-tabs .tab.focus a');
-        if (!focusTab || focusTab.textContent.trim() !== '往期正片') {
+        return !!focusTab && focusTab.textContent.trim() === '往期正片';
+    }
+
+    function checkIfLastInMonth() {
+        if (!isPositiveTabActive()) {
             isLastInMonth = false;
             return;
         }
@@ -383,44 +458,175 @@
     }
 
     let crossMonthSwitching = false; // 防止 timeupdate 高频触发导致重复切换
+    let crossMonthPrepareRetryTimer = null;
+    let crossMonthFailedVideoId = null;
+    let crossMonthBlockAutoplayVideoId = null;
+    let crossMonthReadyTargetVid = null;
+    let crossMonthReadyVideoId = null;
+    let crossMonthPauseRequestedVideoId = null;
 
-    function handleCrossMonthPlay() {
+    function clearCrossMonthPrepareRetry() {
+        if (crossMonthPrepareRetryTimer) {
+            clearTimeout(crossMonthPrepareRetryTimer);
+            crossMonthPrepareRetryTimer = null;
+        }
+    }
+
+    function finishCrossMonthSwitch() {
+        crossMonthSwitching = false;
+    }
+
+    function resetCrossMonthReadyState() {
+        crossMonthReadyTargetVid = null;
+        crossMonthReadyVideoId = null;
+        crossMonthPauseRequestedVideoId = null;
+        clearCrossMonthPrepareRetry();
+    }
+
+    function getReadyTargetLink() {
+        if (!crossMonthReadyTargetVid) return null;
+        return document.querySelector(`[node-type="positive-videolist"] .aside-videolist li[data-vid="${crossMonthReadyTargetVid}"] a`);
+    }
+
+    function getMonthKey(month) {
+        return month ? (month.getAttribute('m-id') || month.textContent.trim()) : null;
+    }
+
+    function notifyCrossMonthFailure() {
+        if (blocklistManagerInstance) {
+            blocklistManagerInstance.showToast('跨月连播失败，请手动切换');
+        }
+    }
+
+    function getMonthTabs() {
+        return Array.from(document.querySelectorAll('.time-select .month.scroll-item'));
+    }
+
+    function getFocusedMonth() {
+        return document.querySelector('.time-select .month.scroll-item.month-focus');
+    }
+
+    function getPositiveVideoList() {
+        return document.querySelector('[node-type="positive-videolist"] .aside-videolist');
+    }
+
+    function getVideoListFirstVid(videoList) {
+        const firstItem = videoList ? videoList.querySelector('li[data-vid]') : null;
+        return firstItem ? firstItem.getAttribute('data-vid') : null;
+    }
+
+    function handleCrossMonthPlay(video, currentVideoId) {
         if (crossMonthSwitching) return;
         crossMonthSwitching = true;
+        clearCrossMonthPrepareRetry();
 
-        // 尝试切到下一个月
-        const months = Array.from(document.querySelectorAll('.time-select-months a.month.scroll-item'));
-        if (!months.length) { crossMonthSwitching = false; return; }
-
-        const currentMonth = document.querySelector('.time-select-months a.month.month-focus');
-        if (!currentMonth) { crossMonthSwitching = false; return; }
-
-        const currentMonthIndex = months.indexOf(currentMonth);
-        // 月份列表是倒序排列的（04月、03月、02月、01月），所以"下一个月"是 index - 1
-        const nextMonthIndex = currentMonthIndex - 1;
-
-        if (nextMonthIndex < 0) {
-            // 已经是最新月份，没有下一个月了，暂停视频防止跳转到其他节目
-            const video = document.querySelector('video');
-            if (video) video.pause();
-            crossMonthSwitching = false;
-            return;
-        }
-
-        const nextMonth = months[nextMonthIndex];
-
-        // 点击下一个月份标签
-        nextMonth.click();
-
-        // 等待列表加载后，点击第一集
-        setTimeout(() => {
-            const newVideoList = document.querySelector('[node-type="positive-videolist"] .aside-videolist');
-            if (!newVideoList) return;
-            const firstItem = newVideoList.querySelector('li[data-vid] a');
-            if (firstItem) {
-                firstItem.click();
+        let prepareRetries = 15;
+        const prepareCrossMonthTarget = () => {
+            const months = getMonthTabs();
+            if (!months.length) {
+                prepareRetries -= 1;
+                if (prepareRetries > 0) {
+                    crossMonthBlockAutoplayVideoId = currentVideoId;
+                    crossMonthPrepareRetryTimer = setTimeout(prepareCrossMonthTarget, 200);
+                    return;
+                }
+                crossMonthFailedVideoId = currentVideoId;
+                notifyCrossMonthFailure();
+                finishCrossMonthSwitch();
+                return;
             }
-        }, 800);
+
+            const currentMonth = getFocusedMonth();
+            if (!currentMonth) {
+                prepareRetries -= 1;
+                if (prepareRetries > 0) {
+                    crossMonthBlockAutoplayVideoId = currentVideoId;
+                    crossMonthPrepareRetryTimer = setTimeout(prepareCrossMonthTarget, 200);
+                    return;
+                }
+                crossMonthFailedVideoId = currentVideoId;
+                notifyCrossMonthFailure();
+                finishCrossMonthSwitch();
+                return;
+            }
+
+            const currentMonthIndex = months.indexOf(currentMonth);
+            if (currentMonthIndex < 0) {
+                prepareRetries -= 1;
+                if (prepareRetries > 0) {
+                    crossMonthBlockAutoplayVideoId = currentVideoId;
+                    crossMonthPrepareRetryTimer = setTimeout(prepareCrossMonthTarget, 200);
+                    return;
+                }
+                crossMonthFailedVideoId = currentVideoId;
+                notifyCrossMonthFailure();
+                finishCrossMonthSwitch();
+                return;
+            }
+
+            const nextMonthIndex = currentMonthIndex - 1;
+
+            if (nextMonthIndex < 0) {
+                crossMonthBlockAutoplayVideoId = currentVideoId;
+                finishCrossMonthSwitch();
+                return;
+            }
+
+            const previousListFirstVid = getVideoListFirstVid(getPositiveVideoList());
+            const nextMonth = months[nextMonthIndex];
+            const nextMonthKey = getMonthKey(nextMonth);
+            crossMonthBlockAutoplayVideoId = currentVideoId;
+
+            nextMonth.click();
+
+            let listRetries = 15;
+            const tryPlayNextMonth = () => {
+                const refreshedFocusedMonth = getFocusedMonth();
+                const refreshedMonthKey = getMonthKey(refreshedFocusedMonth);
+                const newVideoList = getPositiveVideoList();
+                const firstItem = newVideoList ? newVideoList.querySelector('li[data-vid] a') : null;
+                const currentListFirstVid = getVideoListFirstVid(newVideoList);
+                const isListUpdated = !!currentListFirstVid && currentListFirstVid !== previousListFirstVid;
+
+                if (refreshedMonthKey === nextMonthKey && isListUpdated && firstItem) {
+                    const remaining = video.duration && isFinite(video.duration)
+                        ? video.duration - video.currentTime
+                        : Infinity;
+
+                    if ((crossMonthPauseRequestedVideoId === currentVideoId && video.paused) || (remaining < 1 && remaining > 0)) {
+                        if (!video.paused) {
+                            crossMonthPauseRequestedVideoId = currentVideoId;
+                            video.pause();
+                        }
+                        firstItem.click();
+                        crossMonthFailedVideoId = null;
+                        crossMonthBlockAutoplayVideoId = null;
+                        resetCrossMonthReadyState();
+                        finishCrossMonthSwitch();
+                        return;
+                    }
+
+                    crossMonthReadyTargetVid = firstItem.closest('li[data-vid]')?.getAttribute('data-vid') || null;
+                    crossMonthReadyVideoId = currentVideoId;
+                    finishCrossMonthSwitch();
+                    return;
+                }
+
+                listRetries -= 1;
+                if (listRetries > 0) {
+                    crossMonthPrepareRetryTimer = setTimeout(tryPlayNextMonth, 200);
+                    return;
+                }
+
+                crossMonthFailedVideoId = currentVideoId;
+                notifyCrossMonthFailure();
+                finishCrossMonthSwitch();
+            };
+
+            crossMonthPrepareRetryTimer = setTimeout(tryPlayNextMonth, 200);
+        };
+
+        prepareCrossMonthTarget();
     }
 
     function initPlaylistEnhance() {
@@ -428,10 +634,28 @@
         attachEndedListener();
     }
 
+    function ensurePersistentTooltips() {
+        const toggleButton = document.getElementById('autoDanmuToggleBtn');
+        if (toggleButton) {
+            addTooltip(toggleButton, '💡 是否自动关闭弹幕', 'left');
+        }
+
+        const settingsButton = document.getElementById('mgtv_blocklist_setting_btn');
+        if (settingsButton) {
+            addTooltip(settingsButton, '💡 屏蔽词设置', 'left');
+        }
+
+        const importButton = document.getElementById('mgtv_btn_import');
+        if (importButton) {
+            addTooltip(importButton, '💡 导入后新增合并当前已有的屏蔽词', 'top');
+        }
+    }
+
     function init() {
         clearOldTooltips();
         closeDanmu();
         addDanmuShortcutTooltip();
+        ensurePersistentTooltips();
         injectEpisodeTitleWrapStyle(); // 注入视频列表名称自动换行样式
         initPlaylistEnhance(); // 播放列表 Tab 记忆 & 跨月连播
         // 初始化屏蔽词管理器
@@ -455,7 +679,8 @@
                 const regexMatch = pattern.match(/^\/(.*?)\/([gimuy]*)$/);
                 if (regexMatch) {
                     try {
-                        return new RegExp(regexMatch[1], regexMatch[2]);
+                        const flags = regexMatch[2].replace(/g/g, '');
+                        return new RegExp(regexMatch[1], flags);
                     } catch (e) {
                         return pattern;
                     }
@@ -740,6 +965,7 @@
 
             for (const pattern of this.compiledPatterns) {
                 if (pattern instanceof RegExp) {
+                    pattern.lastIndex = 0;
                     if (pattern.test(text)) return true;
                 } else {
                     // 普通文本匹配
@@ -767,6 +993,9 @@
             lastManualTime = 0; // 在切集时清除锁定
             tabRestored = false; // 切集后允许再次恢复 Tab
             crossMonthSwitching = false; // 重置跨月切换锁
+            crossMonthFailedVideoId = null;
+            crossMonthBlockAutoplayVideoId = null;
+            resetCrossMonthReadyState();
             init();
         }
         // 持续尝试恢复 Tab（DOM 可能延迟加载）
@@ -814,6 +1043,10 @@
 
         if (e.target.tagName === 'VIDEO') {
             isManualIntervention = false;
+            crossMonthSwitching = false;
+            crossMonthFailedVideoId = null;
+            crossMonthBlockAutoplayVideoId = null;
+            resetCrossMonthReadyState();
             init();
         }
     };
@@ -830,6 +1063,10 @@
         mutations.forEach(mutation => {
             if (mutation.type === 'attributes' && mutation.attributeName === 'src') {
                 isManualIntervention = false;
+                crossMonthSwitching = false;
+                crossMonthFailedVideoId = null;
+                crossMonthBlockAutoplayVideoId = null;
+                resetCrossMonthReadyState();
                 init();
             }
         });
