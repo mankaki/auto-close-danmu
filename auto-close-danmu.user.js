@@ -246,6 +246,81 @@
         }
     }
 
+    // 全屏下锁定 ESC,避免输入弹幕时按 ESC 退出全屏
+    // 关键: Keyboard Lock 必须在用户手势或 fullscreenchange 事件上下文中调用才会生效
+    let escapeLocked = false;
+    function lockEscapeKey() {
+        if (escapeLocked) return;
+        if (navigator.keyboard && typeof navigator.keyboard.lock === 'function') {
+            navigator.keyboard.lock(['Escape']).then(() => {
+                escapeLocked = true;
+            }).catch(() => {});
+        }
+    }
+    function unlockEscapeKey() {
+        if (!escapeLocked) return;
+        if (navigator.keyboard && typeof navigator.keyboard.unlock === 'function') {
+            try { navigator.keyboard.unlock(); } catch (e) {}
+        }
+        escapeLocked = false;
+    }
+
+    function isEditableTarget(el) {
+        if (!el) return false;
+        const tag = el.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return true;
+        if (el.isContentEditable) return true;
+        if (el.getAttribute && el.getAttribute('role') === 'textbox') return true;
+        return false;
+    }
+
+    // 浏览器原生全屏 或 芒果TV网页全屏(播放器带 fullscreen 类)
+    function isAnyFullscreen() {
+        if (document.fullscreenElement || document.webkitFullscreenElement) return true;
+        const player = document.querySelector('.mango-player, .mgtv-player');
+        if (player && /\b(fullscreen|web-fullscreen|is-fullscreen)\b/.test(player.className)) return true;
+        return false;
+    }
+
+    // 进入原生全屏时立刻锁 ESC (此刻仍在用户手势链中),退出时释放
+    document.addEventListener('fullscreenchange', () => {
+        if (document.fullscreenElement) {
+            lockEscapeKey();
+        } else {
+            unlockEscapeKey();
+        }
+    });
+    document.addEventListener('webkitfullscreenchange', () => {
+        if (document.webkitFullscreenElement) {
+            lockEscapeKey();
+        } else {
+            unlockEscapeKey();
+        }
+    });
+
+    // ESC 被锁定后会以普通键事件送达: 输入框里按只失焦, 其他地方按则手动退出全屏
+    const escInterceptor = (e) => {
+        if (e.key !== 'Escape' && e.keyCode !== 27) return;
+        if (!isAnyFullscreen()) return;
+        const target = e.target || document.activeElement;
+        if (isEditableTarget(target)) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            if (e.type === 'keydown' && typeof target.blur === 'function') target.blur();
+            return;
+        }
+        // 非输入框场景下,保持"ESC = 退出全屏"的原有行为
+        if (e.type === 'keydown') {
+            if (document.exitFullscreen) document.exitFullscreen();
+            else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+        }
+    };
+    window.addEventListener('keydown', escInterceptor, true);
+    window.addEventListener('keyup', escInterceptor, true);
+    document.addEventListener('keydown', escInterceptor, true);
+    document.addEventListener('keyup', escInterceptor, true);
+
     window.addEventListener('keydown', (e) => {
         // 如果正在输入法输入中，直接返回，防止误触
         if (e.isComposing || e.keyCode === 229) return;
