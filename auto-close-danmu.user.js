@@ -31,6 +31,17 @@
     let lastManualTime = 0; // 上次手动操作的时间戳，用于冷却锁定
     let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
 
+    // 统一的弹幕开关按钮选择器，兼容 CSS Modules 生成的 hash class（如 _danmuSwitcher_xxx）
+    const DANMU_SWITCHER_SELECTOR = '[class*="danmuSwitcher"], .danmu-switch';
+    function isDanmuSwitcherOn(btn) {
+        if (!btn) return false;
+        for (const c of btn.classList) {
+            if (/^_?on(_|$)/i.test(c)) return true;
+        }
+        if (btn.getAttribute('aria-checked') === 'true') return true;
+        return false;
+    }
+
     function clearOldTooltips() {
         const tooltipButtons = document.querySelectorAll('[data-mgtv-tooltip-attached]');
         tooltipButtons.forEach(button => {
@@ -176,13 +187,10 @@
         // v2.1.2：如果 5 秒内进行过手动操作，坚决不进行自动关闭（防止竞速冲突）
         if (Date.now() - lastManualTime < 5000) return;
 
-        const danmuBtn = document.querySelector("._danmuSwitcher_1qow5_208") ||
-            document.querySelector(".danmu-switch"); // 增加备选选择器
+        const danmuBtn = document.querySelector(DANMU_SWITCHER_SELECTOR);
 
         if (danmuBtn) {
-            const isOn = danmuBtn.classList.contains("_on_1qow5_238") ||
-                danmuBtn.classList.contains("on") ||
-                danmuBtn.getAttribute('aria-checked') === 'true';
+            const isOn = isDanmuSwitcherOn(danmuBtn);
 
             if (isOn) {
                 // 如果是开启状态，执行关闭
@@ -195,8 +203,7 @@
     }
 
     function toggleDanmu() {
-        const btn = document.querySelector("._danmuSwitcher_1qow5_208") ||
-            document.querySelector(".danmu-switch");
+        const btn = document.querySelector(DANMU_SWITCHER_SELECTOR);
         if (btn) {
             isManualIntervention = true;
             lastManualTime = Date.now(); // 记录手动时间戳
@@ -289,6 +296,8 @@
         } else {
             unlockEscapeKey();
         }
+        // 全屏状态切换后再刷新一次全屏按钮 tooltip（替代每秒轮询）
+        try { modifyFullscreenTooltip(); } catch (e) {}
     });
     document.addEventListener('webkitfullscreenchange', () => {
         if (document.webkitFullscreenElement) {
@@ -296,6 +305,7 @@
         } else {
             unlockEscapeKey();
         }
+        try { modifyFullscreenTooltip(); } catch (e) {}
     });
 
     // ESC 被锁定后会以普通键事件送达: 输入框里按只失焦, 其他地方按则手动退出全屏
@@ -318,8 +328,6 @@
     };
     window.addEventListener('keydown', escInterceptor, true);
     window.addEventListener('keyup', escInterceptor, true);
-    document.addEventListener('keydown', escInterceptor, true);
-    document.addEventListener('keyup', escInterceptor, true);
 
     window.addEventListener('keydown', (e) => {
         // 如果正在输入法输入中，直接返回，防止误触
@@ -339,8 +347,7 @@
 
         // 检查点击目标是否是弹幕开关
         // v2.0.8 进一步收窄范围，仅监听特定的开关类名，避免误触
-        const isDanmuBtn = e.target.closest("._danmuSwitcher_1qow5_208") ||
-            e.target.closest(".danmu-switch");
+        const isDanmuBtn = e.target.closest(DANMU_SWITCHER_SELECTOR);
 
         if (isDanmuBtn) {
             // 用户手动点击了开关，记录为手动干预及时间戳
@@ -351,7 +358,7 @@
     }, true);
 
     function addDanmuShortcutTooltip() {
-        const danmuButtons = document.querySelectorAll("._danmuSwitcher_1qow5_208");
+        const danmuButtons = document.querySelectorAll(DANMU_SWITCHER_SELECTOR);
         danmuButtons.forEach(btn => {
             if (!btn || btn.dataset.mgtvTooltipAttached) return;
             // 使用默认上方 tooltip
@@ -359,28 +366,25 @@
         });
     }
 
-    // 尝试修改全屏按钮 tooltip。去除 mouseover 监听，放入低频 interval 以节省性能
+    // 尝试修改全屏按钮 tooltip。芒果TV 将"全屏"文案渲染在 hover 出现的 popover 中（class 含 popoverTips），
+    // 因此必须持续尝试匹配；限定扫描范围到播放器内的 popover 容器，避免全文档遍历
     function modifyFullscreenTooltip() {
-        const contextNode = document.fullscreenElement || document.body;
-        
-        // 1. 尝试直接修改带有 title 属性的按钮
+        const contextNode = document.fullscreenElement ||
+            document.querySelector('.mango-player, .mgtv-player, #mgtv-player-wrap') ||
+            document.body;
+
+        // 1. 旧版 title 属性路径（保留兼容）
         const fsBtns = contextNode.querySelectorAll('[title="全屏"]');
         fsBtns.forEach(btn => {
             btn.title = '全屏 (F)';
         });
 
-        // 2. 备用策略：保留查找“全屏”文本元素的逻辑
-        const xpath = "//*[text()='全屏']";
-        const result = document.evaluate(xpath, contextNode, null, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, null);
-
-        for (let i = 0; i < result.snapshotLength; i++) {
-            const node = result.snapshotItem(i);
-            // 检查元素是否可见 (offsetParent 不为 null 代表可见)
-            if (node.offsetParent !== null) {
-                const text = node.innerText.trim();
-                if (text === '全屏') {
-                    node.innerText = '全屏 (F)';
-                }
+        // 2. 新版 popover 文案：匹配 _popoverTips_xxx / _PopoverContent_xxx 等容器的叶子节点
+        const popovers = contextNode.querySelectorAll('[class*="popoverTips"], [class*="PopoverContent"]');
+        for (const node of popovers) {
+            if (node.childElementCount !== 0) continue;
+            if (node.textContent.trim() === '全屏') {
+                node.textContent = '全屏 (F)';
             }
         }
     }
@@ -776,7 +780,11 @@
             this.blocklist = list;
             this.compiledPatterns = this.compile(list); // 保存时同步更新预编译列表
             localStorage.setItem(this.storageKey, JSON.stringify(list));
-            // 立即刷新过滤（可选，这里暂不处理已存在的弹幕，仅对新弹幕生效）
+            // 立即扫一遍当前屏幕上已存在的弹幕，使新规则即时生效
+            try {
+                const existing = document.querySelectorAll('[class*="danmuText"], [class*="DanmuText"]');
+                existing.forEach(span => this.performBlock(span));
+            } catch (e) {}
         }
 
         initUI() {
@@ -994,30 +1002,59 @@
             this.reAnchorObserver();
         }
 
-        // 性能核心：尝试寻找精准的弹幕容器进行监听，若找不到则回退到 body
+        // 性能核心：锚定到稳定的弹幕层容器进行监听；找不到则不监听，避免监听 body 导致内存/CPU 爆炸
         reAnchorObserver() {
-            // 芒果TV 弹幕通常渲染在特定的容器内，通过探测找到它
-            // 常见的可能容器类名（基于历史观察）
-            const target = document.querySelector(".m-danmu-container") ||
-                document.querySelector(".danmu-container") ||
-                document.body;
+            // 优先匹配稳定且持久的弹幕层容器（而非单条弹幕气泡）
+            // - mango-danmu-layer: 老版/稳定类名
+            // - _DanmuLayer_xxx: 新版 CSS Modules 生成的弹幕层
+            // - .m-danmu-container / .danmu-container: 历史类名
+            let target = document.querySelector('.mango-danmu-layer') ||
+                document.querySelector('[class*="DanmuLayer"]') ||
+                document.querySelector('.m-danmu-container') ||
+                document.querySelector('.danmu-container');
+
+            if (!target) {
+                // 兜底：从弹幕文本 span 向上寻找，但必须命中 Layer/Container 级别，跳过 Item/Track 等会被销毁的子节点
+                const sampleDanmu = document.querySelector('[class*="danmuText"], [class*="DanmuText"]');
+                if (sampleDanmu) {
+                    let node = sampleDanmu.parentElement;
+                    let hops = 0;
+                    while (node && hops < 8) {
+                        const cls = node.className && typeof node.className === 'string' ? node.className : '';
+                        if (/danmu-?layer|danmu-?container|danma-?layer|barrage-?layer/i.test(cls)) {
+                            target = node;
+                            break;
+                        }
+                        node = node.parentElement;
+                        hops++;
+                    }
+                }
+            }
+
+            if (!target) {
+                // 找不到精准容器：断开监听，等待下一轮轮询再尝试，绝不回退到 body
+                if (this.container) {
+                    this.observer.disconnect();
+                    this.container = null;
+                }
+                return;
+            }
 
             if (this.container !== target) {
                 if (this.observer) this.observer.disconnect();
                 this.container = target;
                 this.observer.observe(target, { childList: true, subtree: true });
-                // console.log(`[Performance] 过滤引擎观测点已切换至: ${target === document.body ? 'body (兜底)' : target.className}`);
             }
         }
 
         checkAndBlock(node) {
-            // 快速检查：如果节点本身是 span
-            if (node.classList && node.classList.contains('_danmuText_1qow5_77')) {
+            // 快速检查：如果节点本身是弹幕文本 span
+            if (node.classList && [...node.classList].some(c => /danmuText/i.test(c))) {
                 this.performBlock(node);
                 return;
             }
             // 否则尝试在子节点中寻找一次（不进行深度递归，仅一级 querySelector）
-            const textSpan = node.querySelector ? node.querySelector('._danmuText_1qow5_77') : null;
+            const textSpan = node.querySelector ? node.querySelector('[class*="danmuText"], [class*="DanmuText"]') : null;
             if (textSpan) {
                 this.performBlock(textSpan);
             }
@@ -1150,7 +1187,15 @@
     let currentObservedVideo = null;
     function startObserveVideo() {
         const video = document.querySelector('video');
-        if (video && video !== currentObservedVideo) {
+        if (!video) {
+            // 页面上已无 video 元素：主动释放旧引用，避免持有已被移除的 HTMLMediaElement 及其 MediaSource
+            if (currentObservedVideo) {
+                videoSrcObserver.disconnect();
+                currentObservedVideo = null;
+            }
+            return;
+        }
+        if (video !== currentObservedVideo) {
             currentObservedVideo = video;
             videoSrcObserver.disconnect();
             videoSrcObserver.observe(video, { attributes: true, attributeFilter: ['src'] });
