@@ -589,6 +589,91 @@
         return document.querySelector('[node-type="positive-videolist"] .aside-videolist');
     }
 
+    let playlistLocateTimer = null;
+    let playlistLocateTargetVideoId = null;
+    let playlistLocateDoneVideoId = null;
+
+    function findCurrentPlaylistItem(videoId, allowPlayingFallback = false) {
+        const videoList = getPositiveVideoList();
+        if (!videoList || !videoId) return null;
+
+        const currentItem = Array.from(videoList.querySelectorAll('li[data-vid]'))
+            .find(item => item.getAttribute('data-vid') === videoId);
+        if (currentItem) return currentItem;
+
+        return allowPlayingFallback ? videoList.querySelector('li.playing[data-vid]') : null;
+    }
+
+    function getScrollableAncestor(element) {
+        let node = element ? element.parentElement : null;
+        while (node && node !== document.body) {
+            if (node.scrollHeight > node.clientHeight + 1) return node;
+            node = node.parentElement;
+        }
+        return null;
+    }
+
+    function scrollPlaylistItemIntoView(item) {
+        const scrollContainer = getScrollableAncestor(item);
+        if (!scrollContainer) {
+            item.scrollIntoView({ block: 'center', inline: 'nearest' });
+            return;
+        }
+
+        const itemRect = item.getBoundingClientRect();
+        const containerRect = scrollContainer.getBoundingClientRect();
+        const centeredOffset = (itemRect.top - containerRect.top) - ((containerRect.height - itemRect.height) / 2);
+        scrollContainer.scrollTop += centeredOffset;
+    }
+
+    function scheduleLocateCurrentVideoInPlaylist() {
+        const videoId = getMgtvVideoId(window.location.href);
+        if (!videoId || playlistLocateDoneVideoId === videoId) return;
+        if (playlistLocateTimer && playlistLocateTargetVideoId === videoId) return;
+
+        if (playlistLocateTimer) {
+            clearTimeout(playlistLocateTimer);
+            playlistLocateTimer = null;
+        }
+
+        playlistLocateTargetVideoId = videoId;
+        let retries = 24;
+
+        const tryLocate = () => {
+            playlistLocateTimer = null;
+
+            const currentVideoId = getMgtvVideoId(window.location.href);
+            if (currentVideoId !== videoId) {
+                playlistLocateTargetVideoId = null;
+                scheduleLocateCurrentVideoInPlaylist();
+                return;
+            }
+
+            const item = findCurrentPlaylistItem(videoId);
+            if (item) {
+                scrollPlaylistItemIntoView(item);
+                playlistLocateDoneVideoId = videoId;
+                playlistLocateTargetVideoId = null;
+                return;
+            }
+
+            retries -= 1;
+            if (retries > 0) {
+                playlistLocateTimer = setTimeout(tryLocate, 250);
+                return;
+            }
+
+            const fallbackItem = findCurrentPlaylistItem(videoId, true);
+            if (fallbackItem) {
+                scrollPlaylistItemIntoView(fallbackItem);
+                playlistLocateDoneVideoId = videoId;
+            }
+            playlistLocateTargetVideoId = null;
+        };
+
+        playlistLocateTimer = setTimeout(tryLocate, 100);
+    }
+
     function getVideoListFirstVid(videoList) {
         const firstItem = videoList ? videoList.querySelector('li[data-vid]') : null;
         return firstItem ? firstItem.getAttribute('data-vid') : null;
@@ -710,6 +795,7 @@
 
     function initPlaylistEnhance() {
         restoreTab();
+        scheduleLocateCurrentVideoInPlaylist();
         attachEndedListener();
     }
 
