@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.3.2
-// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、高级屏蔽词设置（不限数量、支持正则表达式、导入导出功能、本地持久化存储）、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播、全屏下输入弹幕时按 ESC 不退出全屏
+// @version      2.4.0
+// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、相似弹幕合并与数量标记、高级屏蔽词设置、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播、全屏下输入弹幕时按 ESC 不退出全屏
 // @author       mankaki
 // @match        *://www.mgtv.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
@@ -799,6 +799,244 @@
         attachEndedListener();
     }
 
+    // --- 相似弹幕合并 ---
+    class DanmuMergeManager {
+        constructor() {
+            this.storageKey = 'mgtv_danmu_merge_settings';
+            this.settings = this.loadSettings();
+            this.groups = [];
+        }
+
+        loadSettings() {
+            const defaults = {
+                enabled: true,
+                windowSeconds: 20,
+                showCount: true,
+                minCountToShow: 2,
+                enlargeAfter: 5,
+                enlargeEnabled: true,
+                similarityThreshold: 0.88
+            };
+            try {
+                const saved = JSON.parse(localStorage.getItem(this.storageKey));
+                return Object.assign({}, defaults, saved || {});
+            } catch (e) {
+                return defaults;
+            }
+        }
+
+        saveSettings(settings) {
+            const normalized = Object.assign({}, this.settings, settings || {});
+            normalized.windowSeconds = this.clampNumber(normalized.windowSeconds, 1, 60, 20);
+            normalized.minCountToShow = this.clampNumber(normalized.minCountToShow, 1, 99, 2);
+            normalized.enlargeAfter = this.clampNumber(normalized.enlargeAfter, 1, 50, 5);
+            this.settings = normalized;
+            localStorage.setItem(this.storageKey, JSON.stringify(normalized));
+        }
+
+        clampNumber(value, min, max, fallback) {
+            const n = Number(value);
+            if (!Number.isFinite(n)) return fallback;
+            return Math.max(min, Math.min(max, Math.round(n)));
+        }
+
+        reset() {
+            this.groups = [];
+        }
+
+        process(textSpan) {
+            if (!this.settings.enabled || !textSpan || !textSpan.isConnected) return;
+
+            const originalText = this.getOriginalText(textSpan);
+            if (!originalText) return;
+
+            const normalizedText = this.normalizeText(originalText);
+            if (!normalizedText) return;
+
+            const now = Date.now();
+            this.cleanup(now);
+
+            const matchedGroup = this.findSimilarGroup(normalizedText, now, textSpan);
+            if (!matchedGroup) {
+                this.groups.push(this.createGroup(textSpan, originalText, normalizedText, now));
+                return;
+            }
+
+            const container = this.findDanmuContainer(textSpan);
+            const hiddenTarget = container && container !== matchedGroup.container ? container : textSpan;
+            this.hideMergedDanmu(hiddenTarget);
+
+            matchedGroup.count += 1;
+            matchedGroup.lastSeen = now;
+            this.renderGroup(matchedGroup);
+        }
+
+        getOriginalText(textSpan) {
+            if (!textSpan.dataset.mgtvOriginalDanmuText) {
+                textSpan.dataset.mgtvOriginalDanmuText = textSpan.innerText.trim();
+            }
+            return textSpan.dataset.mgtvOriginalDanmuText.trim();
+        }
+
+        normalizeText(text) {
+            return text
+                .replace(/^×\d+\s*/, '')
+                .replace(/^（\d+）\s*/, '')
+                .replace(/^\(\d+\)\s*/, '')
+                .replace(/[\s\u00a0]/g, '')
+                .replace(/[，。！？!?,.;:~～、…·"'“”‘’【】[\]()（）<>《》|\\/_-]/g, '')
+                .replace(/(.)\1{2,}/g, '$1$1')
+                .toLowerCase()
+                .trim();
+        }
+
+        createGroup(textSpan, originalText, normalizedText, now) {
+            const container = this.findDanmuContainer(textSpan);
+            const computedFontSize = parseFloat(window.getComputedStyle(textSpan).fontSize);
+            return {
+                textSpan,
+                container,
+                originalText,
+                normalizedText,
+                count: 1,
+                createdAt: now,
+                lastSeen: now,
+                baseFontSize: Number.isFinite(computedFontSize) ? computedFontSize : null
+            };
+        }
+
+        findSimilarGroup(normalizedText, now, currentTextSpan) {
+            let best = null;
+            let bestScore = 0;
+            for (const group of this.groups) {
+                if (group.textSpan === currentTextSpan) continue;
+                if (!group.textSpan.isConnected) continue;
+                if (group.container && group.container.style.display === 'none') continue;
+                if (now - group.lastSeen > this.settings.windowSeconds * 1000) continue;
+
+                const score = this.getSimilarity(normalizedText, group.normalizedText);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = group;
+                }
+            }
+
+            if (!best) return null;
+            if (bestScore >= this.settings.similarityThreshold) return best;
+            return null;
+        }
+
+        getSimilarity(a, b) {
+            if (!a || !b) return 0;
+            if (a === b) return 1;
+            const minLen = Math.min(a.length, b.length);
+            const maxLen = Math.max(a.length, b.length);
+            if (minLen <= 3) return 0;
+            if ((a.includes(b) || b.includes(a)) && maxLen - minLen <= 2) return 0.92;
+            return 1 - (this.getLevenshteinDistance(a, b) / maxLen);
+        }
+
+        getLevenshteinDistance(a, b) {
+            const costs = new Array(b.length + 1);
+            for (let j = 0; j <= b.length; j++) costs[j] = j;
+
+            for (let i = 1; i <= a.length; i++) {
+                let prev = i - 1;
+                costs[0] = i;
+                for (let j = 1; j <= b.length; j++) {
+                    const temp = costs[j];
+                    costs[j] = a[i - 1] === b[j - 1]
+                        ? prev
+                        : Math.min(prev + 1, costs[j] + 1, costs[j - 1] + 1);
+                    prev = temp;
+                }
+            }
+
+            return costs[b.length];
+        }
+
+        hideMergedDanmu(element) {
+            if (!element) return;
+            if (!element.dataset.mgtvMergeHidden) {
+                element.dataset.mgtvMergePreviousDisplay = element.style.display || '';
+            }
+            element.dataset.mgtvMergeHidden = 'true';
+            element.style.display = 'none';
+        }
+
+        renderGroup(group) {
+            if (!group.textSpan || !group.textSpan.isConnected) return;
+
+            group.textSpan.dataset.mgtvMergeRendered = 'true';
+            const shouldShowCount = this.settings.showCount && group.count > this.settings.minCountToShow;
+            if (shouldShowCount) {
+                const countSpan = document.createElement('span');
+                countSpan.textContent = `(${group.count})`;
+                countSpan.style.fontSize = '0.72em';
+                countSpan.style.marginRight = '0.08em';
+                countSpan.style.verticalAlign = 'baseline';
+                group.textSpan.replaceChildren(countSpan, document.createTextNode(group.originalText));
+            } else {
+                group.textSpan.textContent = group.originalText;
+            }
+            group.textSpan.title = `${group.originalText}（已合并 ${group.count} 条）`;
+
+            if (!this.settings.enlargeEnabled || !group.baseFontSize) return;
+            const step = Math.floor((group.count - 1) / this.settings.enlargeAfter);
+            const scale = Math.min(2.2, 1 + step * 0.18);
+            group.textSpan.style.fontSize = `${group.baseFontSize * scale}px`;
+            group.textSpan.style.fontWeight = step > 0 ? '700' : '';
+        }
+
+        restoreRenderedDanmu() {
+            const rendered = document.querySelectorAll('[data-mgtv-merge-rendered="true"]');
+            rendered.forEach(textSpan => {
+                const originalText = textSpan.dataset.mgtvOriginalDanmuText;
+                if (originalText) {
+                    textSpan.textContent = originalText;
+                }
+                if (textSpan.title && textSpan.title.includes('已合并')) {
+                    textSpan.removeAttribute('title');
+                }
+                textSpan.style.fontSize = '';
+                textSpan.style.fontWeight = '';
+                delete textSpan.dataset.mgtvMergeRendered;
+            });
+
+            const hidden = document.querySelectorAll('[data-mgtv-merge-hidden="true"]');
+            hidden.forEach(element => {
+                element.style.display = element.dataset.mgtvMergePreviousDisplay || '';
+                delete element.dataset.mgtvMergePreviousDisplay;
+                delete element.dataset.mgtvMergeHidden;
+            });
+        }
+
+        cleanup(now) {
+            const ttl = Math.max(this.settings.windowSeconds * 1000, 30000);
+            this.groups = this.groups.filter(group => {
+                if (!group.textSpan || !group.textSpan.isConnected) return false;
+                if (group.container && !group.container.isConnected) return false;
+                return now - group.lastSeen <= ttl;
+            });
+        }
+
+        findDanmuContainer(textSpan) {
+            let node = textSpan;
+            let fallback = null;
+            let hops = 0;
+            while (node && hops < 8) {
+                if (node.nodeType === 1) {
+                    const cls = node.className && typeof node.className === 'string' ? node.className : '';
+                    if (!fallback && node.tagName === 'DIV') fallback = node;
+                    if (/danmu-?item|DanmuItem|barrage-?item|danmaku-?item/i.test(cls)) return node;
+                }
+                node = node.parentElement;
+                hops++;
+            }
+            return fallback || textSpan.closest('div') || textSpan;
+        }
+    }
+
     function ensurePersistentTooltips() {
         const toggleButton = document.getElementById('autoDanmuToggleBtn');
         if (toggleButton) {
@@ -807,12 +1045,17 @@
 
         const settingsButton = document.getElementById('mgtv_blocklist_setting_btn');
         if (settingsButton) {
-            addTooltip(settingsButton, '💡 屏蔽词设置', 'left');
+            addTooltip(settingsButton, '💡 弹幕增强设置', 'left');
         }
 
         const importButton = document.getElementById('mgtv_btn_import');
         if (importButton) {
             addTooltip(importButton, '💡 导入后新增合并当前已有的屏蔽词', 'top');
+        }
+
+        const exportButton = document.getElementById('mgtv_btn_export');
+        if (exportButton) {
+            addTooltip(exportButton, '💡 导出当前屏蔽词列表为 txt 文件', 'top');
         }
     }
 
@@ -835,6 +1078,7 @@
             this.storageKey = 'mgtv_custom_blocklist';
             this.blocklist = this.load();
             this.compiledPatterns = this.compile(this.blocklist); // 预编译正则表达式
+            this.mergeManager = new DanmuMergeManager();
             this.initUI();
             this.startFilter();
         }
@@ -869,7 +1113,7 @@
             // 立即扫一遍当前屏幕上已存在的弹幕，使新规则即时生效
             try {
                 const existing = document.querySelectorAll('[class*="danmuText"], [class*="DanmuText"]');
-                existing.forEach(span => this.performBlock(span));
+                existing.forEach(span => this.processDanmuText(span));
             } catch (e) {}
         }
 
@@ -934,7 +1178,7 @@
             document.body.appendChild(btn);
 
             // 使用与主按钮相同的 Tooltip 样式
-            addTooltip(btn, '💡 屏蔽词设置', 'left');
+            addTooltip(btn, '💡 弹幕增强设置', 'left');
         }
 
         createModal() {
@@ -958,6 +1202,8 @@
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
                 color: #333;
                 position: relative;
+                max-height: 90vh;
+                overflow: auto;
             `;
 
             // 芒果TV风格按钮样式
@@ -967,7 +1213,7 @@
 
             content.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-                    <h3 style="margin:0; font-size:18px; font-weight:600;">屏蔽词设置</h3>
+                    <h3 style="margin:0; font-size:18px; font-weight:600;">弹幕增强设置</h3>
                     <div id="mgtv_modal_close" style="cursor:pointer; font-size:20px; color:#999;">×</div>
                 </div>
                 
@@ -975,7 +1221,28 @@
                     每行一个屏蔽词。支持文本及正则表达式（如 <code style="background:#f5f5f5;padding:2px 4px;border-radius:4px;">/^haha\\d+$/i</code>）。
                 </p>
                 
-                <textarea id="mgtv_blocklist_input" style="width:100%; height:240px; margin-bottom:16px; padding:12px; border:1px solid #ddd; border-radius:8px; font-family:monospace; font-size:14px; resize:vertical; box-sizing:border-box; outline:none;"></textarea>
+                <textarea id="mgtv_blocklist_input" style="width:100%; height:200px; margin-bottom:16px; padding:12px; border:1px solid #ddd; border-radius:8px; font-family:monospace; font-size:14px; resize:vertical; box-sizing:border-box; outline:none;"></textarea>
+
+                <div style="border:1px solid #eee; border-radius:8px; padding:12px; margin-bottom:16px; background:#fafafa;">
+                    <div style="font-size:14px; font-weight:600; margin-bottom:10px;">弹幕合并</div>
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
+                        <input type="checkbox" id="mgtv_merge_enabled"> 启用相似弹幕合并
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
+                        时间阈值
+                        <input type="number" id="mgtv_merge_window" min="1" max="60" step="1" style="width:64px; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                        秒内的相似弹幕合并
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
+                        <input type="checkbox" id="mgtv_merge_show_count"> 显示弹幕数量标记
+                        <span>仅当数量大于</span>
+                        <input type="number" id="mgtv_merge_min_count" min="1" max="99" step="1" style="width:56px; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                        <span>时显示</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
+                        <input type="checkbox" id="mgtv_merge_enlarge"> 合并后增大字号，超过 5 条后逐级变大
+                    </label>
+                </div>
                 
                 <div style="display:flex; justify-content:space-between; align-items:center;">
                     <div style="display:flex; align-items:center;">
@@ -998,7 +1265,8 @@
             content.querySelector('#mgtv_modal_close').addEventListener('click', close);
             content.querySelector('#mgtv_btn_cancel').addEventListener('click', close);
             content.querySelector('#mgtv_btn_save').addEventListener('click', () => this.saveFromUI());
-            content.querySelector('#mgtv_btn_export').addEventListener('click', () => this.exportToFile());
+            const exportBtn = content.querySelector('#mgtv_btn_export');
+            exportBtn.addEventListener('click', () => this.exportToFile());
 
             const importBtn = content.querySelector('#mgtv_btn_import');
             importBtn.addEventListener('click', () => document.getElementById('mgtv_file_input').click());
@@ -1014,10 +1282,11 @@
             addBtnHover(content.querySelector('#mgtv_btn_save'), '#E55500', '#FF5F00');
             addBtnHover(content.querySelector('#mgtv_btn_cancel'), '#f0f0f0');
             addBtnHover(importBtn, '#f0f0f0');
-            addBtnHover(content.querySelector('#mgtv_btn_export'), '#f0f0f0');
+            addBtnHover(exportBtn, '#f0f0f0');
 
-            // 为导入按钮添加自定义 Tooltip
+            // 为导入/导出按钮添加自定义 Tooltip
             addTooltip(importBtn, '💡 导入后新增合并当前已有的屏蔽词', 'top');
+            addTooltip(exportBtn, '💡 导出当前屏蔽词列表为 txt 文件', 'top');
 
             // 简单的Textarea focus样式
             const ta = document.getElementById('mgtv_blocklist_input');
@@ -1029,13 +1298,50 @@
             const modal = document.getElementById('mgtv_blocklist_modal');
             const textarea = document.getElementById('mgtv_blocklist_input');
             textarea.value = this.blocklist.join('\n');
+            this.fillMergeSettingsUI();
             modal.style.display = 'flex';
+        }
+
+        fillMergeSettingsUI() {
+            const settings = this.mergeManager.settings;
+            const enabled = document.getElementById('mgtv_merge_enabled');
+            const windowInput = document.getElementById('mgtv_merge_window');
+            const showCount = document.getElementById('mgtv_merge_show_count');
+            const minCount = document.getElementById('mgtv_merge_min_count');
+            const enlarge = document.getElementById('mgtv_merge_enlarge');
+            if (!enabled || !windowInput || !showCount || !minCount || !enlarge) return;
+
+            enabled.checked = !!settings.enabled;
+            windowInput.value = settings.windowSeconds;
+            showCount.checked = !!settings.showCount;
+            minCount.value = settings.minCountToShow;
+            enlarge.checked = !!settings.enlargeEnabled;
+        }
+
+        saveMergeSettingsFromUI() {
+            const enabled = document.getElementById('mgtv_merge_enabled');
+            const windowInput = document.getElementById('mgtv_merge_window');
+            const showCount = document.getElementById('mgtv_merge_show_count');
+            const minCount = document.getElementById('mgtv_merge_min_count');
+            const enlarge = document.getElementById('mgtv_merge_enlarge');
+            if (!enabled || !windowInput || !showCount || !minCount || !enlarge) return;
+
+            this.mergeManager.restoreRenderedDanmu();
+            this.mergeManager.saveSettings({
+                enabled: enabled.checked,
+                windowSeconds: windowInput.value,
+                showCount: showCount.checked,
+                minCountToShow: minCount.value,
+                enlargeEnabled: enlarge.checked
+            });
+            this.mergeManager.reset();
         }
 
         saveFromUI() {
             const textarea = document.getElementById('mgtv_blocklist_input');
             const raw = textarea.value.split('\n').map(s => s.trim()).filter(s => s);
             const unique = [...new Set(raw)];
+            this.saveMergeSettingsFromUI();
             this.save(unique);
             document.getElementById('mgtv_blocklist_modal').style.display = 'none';
             this.showToast('保存成功');
@@ -1079,7 +1385,7 @@
                     for (let j = 0; j < addedNodes.length; j++) {
                         const node = addedNodes[j];
                         if (node.nodeType === 1) {
-                            this.checkAndBlock(node);
+                            this.checkAndProcess(node);
                         }
                     }
                 }
@@ -1129,31 +1435,39 @@
             if (this.container !== target) {
                 if (this.observer) this.observer.disconnect();
                 this.container = target;
+                if (this.mergeManager) this.mergeManager.reset();
                 this.observer.observe(target, { childList: true, subtree: true });
             }
         }
 
-        checkAndBlock(node) {
+        checkAndProcess(node) {
             // 快速检查：如果节点本身是弹幕文本 span
             if (node.classList && [...node.classList].some(c => /danmuText/i.test(c))) {
-                this.performBlock(node);
+                this.processDanmuText(node);
                 return;
             }
             // 否则尝试在子节点中寻找一次（不进行深度递归，仅一级 querySelector）
             const textSpan = node.querySelector ? node.querySelector('[class*="danmuText"], [class*="DanmuText"]') : null;
             if (textSpan) {
-                this.performBlock(textSpan);
+                this.processDanmuText(textSpan);
             }
         }
 
+        processDanmuText(textSpan) {
+            if (this.performBlock(textSpan)) return;
+            this.mergeManager.process(textSpan);
+        }
+
         performBlock(textSpan) {
-            const text = textSpan.innerText.trim();
+            const text = (textSpan.dataset.mgtvOriginalDanmuText || textSpan.innerText).trim();
             if (this.shouldBlock(text)) {
                 // 尝试隐藏最外层容器（通常是 ._danmuItem...），如果找不到就隐藏 span 本身
                 // 使用 closest 可以更精准地找到弹幕条目
                 const container = textSpan.closest('div') || textSpan;
                 container.style.display = 'none';
+                return true;
             }
+            return false;
         }
 
         shouldBlock(text) {
