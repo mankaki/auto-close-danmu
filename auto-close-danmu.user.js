@@ -1,12 +1,13 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.4.0
+// @version      2.4.1
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、相似弹幕合并与数量标记、高级屏蔽词设置、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播、全屏下输入弹幕时按 ESC 不退出全屏
 // @author       mankaki
 // @match        *://www.mgtv.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
-// @grant        none
+// @grant        GM_getValue
+// @grant        GM_setValue
 // @license      GPL-3.0
 // @downloadURL  https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
 // @updateURL    https://raw.githubusercontent.com/mankaki/auto-close-danmu/main/auto-close-danmu.user.js
@@ -1100,7 +1101,15 @@
 
         load() {
             try {
-                return JSON.parse(localStorage.getItem(this.storageKey)) || [];
+                const saved = typeof GM_getValue === 'function' ? GM_getValue(this.storageKey, null) : null;
+                if (Array.isArray(saved)) return saved;
+                if (typeof saved === 'string') return JSON.parse(saved) || [];
+
+                const localSaved = JSON.parse(localStorage.getItem(this.storageKey)) || [];
+                if (localSaved.length && typeof GM_setValue === 'function') {
+                    GM_setValue(this.storageKey, localSaved);
+                }
+                return localSaved;
             } catch (e) {
                 return [];
             }
@@ -1109,7 +1118,14 @@
         save(list) {
             this.blocklist = list;
             this.compiledPatterns = this.compile(list); // 保存时同步更新预编译列表
-            localStorage.setItem(this.storageKey, JSON.stringify(list));
+            try {
+                if (typeof GM_setValue === 'function') {
+                    GM_setValue(this.storageKey, list);
+                }
+            } catch (e) {}
+            try {
+                localStorage.setItem(this.storageKey, JSON.stringify(list));
+            } catch (e) {}
             // 立即扫一遍当前屏幕上已存在的弹幕，使新规则即时生效
             try {
                 const existing = document.querySelectorAll('[class*="danmuText"], [class*="DanmuText"]');
