@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.4.1
+// @version      2.5.34
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作（D键切换弹幕/F键全屏）、相似弹幕合并与数量标记、高级屏蔽词设置、视频列表名称自动换行、播放列表Tab记忆与跨月自动连播、全屏下输入弹幕时按 ESC 不退出全屏
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -285,8 +285,24 @@
     // 浏览器原生全屏 或 芒果TV网页全屏(播放器带 fullscreen 类)
     function isAnyFullscreen() {
         if (document.fullscreenElement || document.webkitFullscreenElement) return true;
-        const player = document.querySelector('.mango-player, .mgtv-player');
-        if (player && /\b(fullscreen|web-fullscreen|is-fullscreen)\b/.test(player.className)) return true;
+        const player = document.querySelector('.mango-player, .mgtv-player, #mgtv-player-wrap, .m-player-h5-new');
+        const fullscreenNodes = [
+            player,
+            document.documentElement,
+            document.body
+        ];
+        if (fullscreenNodes.some(node => node && /\b(fullscreen|web-fullscreen|is-fullscreen|pip-web-fs-active|web-fs-active)\b/.test(node.className))) return true;
+        if (player) {
+            const rect = player.getBoundingClientRect();
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+            if (
+                Math.abs(rect.x) < 4 &&
+                Math.abs(rect.y) < 4 &&
+                rect.width >= viewportWidth * 0.82 &&
+                rect.height >= viewportHeight * 0.72
+            ) return true;
+        }
         return false;
     }
 
@@ -299,6 +315,10 @@
         }
         // 全屏状态切换后再刷新一次全屏按钮 tooltip（替代每秒轮询）
         try { modifyFullscreenTooltip(); } catch (e) {}
+        try {
+            removeFullscreenEpisodePanel();
+            ensureFullscreenEpisodeButton();
+        } catch (e) {}
     });
     document.addEventListener('webkitfullscreenchange', () => {
         if (document.webkitFullscreenElement) {
@@ -307,6 +327,10 @@
             unlockEscapeKey();
         }
         try { modifyFullscreenTooltip(); } catch (e) {}
+        try {
+            removeFullscreenEpisodePanel();
+            ensureFullscreenEpisodeButton();
+        } catch (e) {}
     });
 
     // ESC 被锁定后会以普通键事件送达: 输入框里按只失焦, 其他地方按则手动退出全屏
@@ -329,6 +353,65 @@
     };
     window.addEventListener('keydown', escInterceptor, true);
     window.addEventListener('keyup', escInterceptor, true);
+
+    window.addEventListener('keydown', (e) => {
+        if (e.key === 'f' || e.key === 'F' || e.key === 'Escape') {
+            cancelFullscreenEpisodeRefocus();
+            return;
+        }
+        if (e.key === 'q' || e.key === 'Q') {
+            if (e.isComposing || e.keyCode === 229 || isTyping()) return;
+            const scriptWebFullscreenContainer = getScriptWebFullscreenContainer();
+            if (scriptWebFullscreenContainer) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+                suppressNextQKeyup = true;
+                mgtvQKeyStartedInWebFullscreen = false;
+                restoreScriptWebFullscreenContainer(scriptWebFullscreenContainer);
+                return;
+            }
+            mgtvQKeyStartedInWebFullscreen = document.body.classList.contains('pip-web-fs-active') ||
+                document.body.classList.contains('web-fs-active');
+            if (mgtvQKeyStartedInWebFullscreen) {
+                toggleFullscreenEpisodePanel(false);
+                releaseFullscreenEpisodeFocus();
+                scheduleMgtvWebFullscreenExitRepair();
+            } else {
+                scheduleMgtvWebFullscreenEnterFallback();
+            }
+        }
+    }, true);
+
+    window.addEventListener('keyup', (e) => {
+        if (e.key !== 'q' && e.key !== 'Q') return;
+        if (e.isComposing || e.keyCode === 229 || isTyping()) return;
+        if (suppressNextQKeyup) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            suppressNextQKeyup = false;
+            return;
+        }
+        if (getScriptWebFullscreenContainer()) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            suppressNextQKeyup = false;
+            mgtvQKeyStartedInWebFullscreen = false;
+            return;
+        }
+        if (mgtvQKeyStartedInWebFullscreen) {
+            e.preventDefault();
+            e.stopPropagation();
+            if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+            mgtvQKeyStartedInWebFullscreen = false;
+            return;
+        }
+        if (document.body.classList.contains('pip-web-fs-active') ||
+            document.body.classList.contains('web-fs-active')) return;
+        scheduleMgtvWebFullscreenEnterFallback();
+    }, true);
 
     window.addEventListener('keydown', (e) => {
         // 如果正在输入法输入中，直接返回，防止误触
@@ -392,18 +475,220 @@
 
     // --- 视频列表名称自动换行 ---
     function injectEpisodeTitleWrapStyle() {
-        if (document.getElementById('mgtv_episode_wrap_style')) return;
-        const style = document.createElement('style');
-        style.id = 'mgtv_episode_wrap_style';
-        style.textContent = `
+        let style = document.getElementById('mgtv_episode_wrap_style');
+        if (!style) {
+            style = document.createElement('style');
+            style.id = 'mgtv_episode_wrap_style';
+            document.head.appendChild(style);
+        }
+
+        if (!style.textContent.includes('span.name')) {
+            style.textContent += `
             span.name {
                 white-space: normal !important;
                 overflow: visible !important;
                 text-overflow: unset !important;
                 word-break: break-word !important;
             }
+            `;
+        }
+
+        let fullscreenEpisodeStyle = document.getElementById('mgtv_fullscreen_episode_style');
+        if (!fullscreenEpisodeStyle) {
+            fullscreenEpisodeStyle = document.createElement('style');
+            fullscreenEpisodeStyle.id = 'mgtv_fullscreen_episode_style';
+            document.head.appendChild(fullscreenEpisodeStyle);
+        }
+        fullscreenEpisodeStyle.textContent = `
+            #mgtv_fullscreen_episode_btn {
+                display: none;
+                align-items: center;
+                justify-content: center;
+                height: 21px;
+                padding: 0;
+                margin: 0 0 0 16px;
+                color: #fff;
+                font-size: 14px;
+                line-height: 21px;
+                cursor: pointer;
+                user-select: none;
+                background: transparent;
+                transition: color 0.2s ease;
+            }
+
+            #mgtv_fullscreen_episode_btn:hover,
+            #mgtv_fullscreen_episode_btn.mgtv-fullscreen-episode-active {
+                color: #ff5f00;
+                background: transparent;
+            }
+
+            #mgtv_fullscreen_episode_panel {
+                position: fixed !important;
+                right: 92px !important;
+                bottom: 72px !important;
+                width: min(380px, calc(100vw - 48px));
+                max-height: min(58vh, 560px);
+                z-index: 2147483647;
+                display: none;
+                overflow: hidden;
+                box-sizing: border-box;
+                color: #fff;
+                background: rgba(6, 8, 18, 0.94);
+                border: 0;
+                border-radius: 8px;
+                box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
+                backdrop-filter: blur(8px);
+            }
+
+            #mgtv_fullscreen_episode_panel.mgtv-fullscreen-episode-open {
+                display: flex;
+                flex-direction: column;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-head {
+                display: none;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                min-height: 44px;
+                padding: 0 14px;
+                border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                font-size: 15px;
+                font-weight: 600;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-close {
+                width: 28px;
+                height: 28px;
+                border: 0;
+                padding: 0;
+                color: #fff;
+                background: transparent;
+                font-size: 24px;
+                line-height: 26px;
+                cursor: pointer;
+                opacity: 0.78;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-close:hover {
+                opacity: 1;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-body {
+                overflow: auto;
+                padding: 8px;
+                scrollbar-width: thin;
+                scrollbar-color: rgba(255, 255, 255, 0.36) transparent;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-body::-webkit-scrollbar {
+                width: 6px;
+                height: 6px;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-body::-webkit-scrollbar-track {
+                background: transparent;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-body::-webkit-scrollbar-thumb {
+                background: rgba(255, 255, 255, 0.34);
+                border-radius: 999px;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-months {
+                display: flex;
+                gap: 8px;
+                padding: 8px 8px 2px;
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-months::-webkit-scrollbar {
+                width: 0;
+                height: 0;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-month {
+                flex: 0 0 auto;
+                border: 0;
+                padding: 5px 10px;
+                color: rgba(255, 255, 255, 0.62);
+                background: transparent;
+                border-radius: 6px;
+                font-size: 14px;
+                line-height: 18px;
+                cursor: pointer;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-month:hover,
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-month.mgtv-fullscreen-episode-month-active {
+                color: #ff5f00;
+                background: rgba(255, 95, 0, 0.12);
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-list {
+                display: grid !important;
+                grid-template-columns: repeat(auto-fill, minmax(58px, 1fr));
+                gap: 10px;
+                margin: 0 !important;
+                padding: 0 !important;
+                list-style: none !important;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-list-long {
+                grid-template-columns: 1fr;
+                gap: 2px;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-group {
+                display: contents;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-item {
+                list-style: none !important;
+                margin: 0 !important;
+                padding: 0 !important;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-link {
+                display: flex !important;
+                align-items: center;
+                justify-content: center;
+                min-height: 36px;
+                padding: 0 8px;
+                box-sizing: border-box;
+                color: rgba(255, 255, 255, 0.9) !important;
+                background: transparent;
+                border: 0;
+                border-radius: 6px;
+                font-size: 14px;
+                line-height: 18px;
+                text-align: center;
+                text-decoration: none !important;
+                white-space: normal;
+                word-break: break-word;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-list-long .mgtv-fullscreen-episode-link {
+                justify-content: flex-start;
+                min-height: 34px;
+                padding: 7px 10px;
+                line-height: 20px;
+                text-align: left;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-item.mgtv-fullscreen-episode-current .mgtv-fullscreen-episode-link,
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-link:hover {
+                color: #ff5f00 !important;
+                background: transparent;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-empty {
+                padding: 20px;
+                color: rgba(255, 255, 255, 0.72);
+                text-align: center;
+            }
         `;
-        document.head.appendChild(style);
     }
 
     // --- 播放列表 Tab 记忆 & 跨月自动连播 ---
@@ -587,12 +872,25 @@
     }
 
     function getPositiveVideoList() {
-        return document.querySelector('[node-type="positive-videolist"] .aside-videolist');
+        return document.querySelector('[node-type="positive-videolist"] .aside-videolist') ||
+            document.querySelector('[node-type="episode-aside-videolist"] .episode-items') ||
+            document.querySelector('.m-tv-aside-list [node-type="episode-aside-videolist"] .episode-items');
     }
 
     let playlistLocateTimer = null;
     let playlistLocateTargetVideoId = null;
     let playlistLocateDoneVideoId = null;
+    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.34';
+    let fullscreenEpisodeCloseTimer = null;
+    let fullscreenEpisodeStateSignature = '';
+    let fullscreenEpisodeKeepOpenUntil = 0;
+    let fullscreenEpisodeMonthSwitching = false;
+    let fullscreenEpisodeRefocusToken = 0;
+    let fullscreenEpisodeMonthSwitchToken = 0;
+    let mgtvWebFullscreenExitRepairToken = 0;
+    let mgtvQKeyStartedInWebFullscreen = false;
+    let suppressNextQKeyup = false;
+    const scriptWebFullscreenRestoreMap = new WeakMap();
 
     function findCurrentPlaylistItem(videoId, allowPlayingFallback = false) {
         const videoList = getPositiveVideoList();
@@ -673,6 +971,828 @@
         };
 
         playlistLocateTimer = setTimeout(tryLocate, 100);
+    }
+
+    function getPlayerRoot() {
+        const candidates = Array.from(document.querySelectorAll('.mango-player, .mgtv-player, #mgtv-player-wrap, .m-player-h5-new, .m-player'));
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        return candidates.find(node => {
+            const rect = node.getBoundingClientRect();
+            return Math.abs(rect.x) < 4 &&
+                Math.abs(rect.y) < 4 &&
+                rect.width >= viewportWidth * 0.82 &&
+                rect.height >= viewportHeight * 0.72;
+        }) ||
+            candidates.find(node => {
+                const rect = node.getBoundingClientRect();
+                return rect.width > 300 &&
+                    rect.height > 180 &&
+                    rect.bottom > 0 &&
+                    rect.right > 0 &&
+                    rect.top < viewportHeight &&
+                    rect.left < viewportWidth;
+            }) ||
+            candidates[0] ||
+            document.fullscreenElement ||
+            document.body;
+    }
+
+    function findFullscreenSpeedControl() {
+        const player = getPlayerRoot();
+        const visibleParent = (node) => {
+            let current = node;
+            while (current && current !== player && current !== document.body) {
+                const rect = current.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) return true;
+                current = current.parentElement;
+            }
+            return false;
+        };
+
+        const rateButton = Array.from(player.querySelectorAll('.playRateBtn, [class*="playRate"], [class*="PlayRate"], [class*="rateBtn"], [class*="RateBtn"]'))
+            .find(node => node.parentElement && visibleParent(node));
+        if (rateButton) return rateButton;
+
+        const candidates = Array.from(player.querySelectorAll('div, button, span, p'))
+            .filter(node => {
+                const text = node.textContent ? node.textContent.trim() : '';
+                return text === '倍速' || (text.includes('倍速') && text.length <= 40);
+            });
+
+        if (candidates.length) {
+            const buttonLike = candidates
+                .map(node => node.closest('.playRateBtn, [class*="playRate"], [class*="PlayRate"], [class*="rateBtn"], [class*="RateBtn"], button, [role="button"], [class*="button"], [class*="Button"], [class*="speed"], [class*="Speed"]') || node)
+                .find(node => node && node.parentElement && visibleParent(node));
+
+            if (buttonLike) return buttonLike;
+        }
+
+        const classFallback = Array.from(player.querySelectorAll('[class*="speed"], [class*="Speed"]'))
+            .find(node => {
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0 && node.parentElement;
+            });
+
+        return classFallback || candidates[0] || null;
+    }
+
+    function findFullscreenControlRightList() {
+        const player = getPlayerRoot();
+        return Array.from(player.querySelectorAll('.controlBarRight, [class*="RightList"], [class*="rightList"]'))
+            .find(node => {
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }) || null;
+    }
+
+    function getFullscreenEpisodeMount() {
+        const speedControl = findFullscreenSpeedControl();
+        if (speedControl && speedControl.parentElement) {
+            return { speedControl, parent: speedControl.parentElement };
+        }
+        const rightList = findFullscreenControlRightList();
+        if (rightList) {
+            const beforeNode = rightList.querySelector('.clarityBtn, [class*="clarity"], [class*="Clarity"], .fullscreenBtn, [class*="fullscreen"], [class*="Fullscreen"]');
+            return { speedControl: null, parent: rightList, beforeNode };
+        }
+        return { speedControl: null, parent: getPlayerRoot() };
+    }
+
+    function stripDuplicateIds(root) {
+        if (!root) return;
+        if (root.removeAttribute) root.removeAttribute('id');
+        root.querySelectorAll('[id]').forEach(node => node.removeAttribute('id'));
+    }
+
+    function getFullscreenContainer() {
+        return document.fullscreenElement ||
+            document.webkitFullscreenElement ||
+            document.body;
+    }
+
+    function getFullscreenEpisodeStateSignature() {
+        const player = document.querySelector('.mango-player, .mgtv-player, #mgtv-player-wrap, .m-player-h5-new');
+        return [
+            isAnyFullscreen() ? '1' : '0',
+            document.fullscreenElement ? 'native' : 'web',
+            player ? player.className : ''
+        ].join('|');
+    }
+
+    function removeFullscreenEpisodePanel() {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (panel) panel.remove();
+    }
+
+    function normalizeEpisodeTitleText(text) {
+        return (text || '')
+            .replace(/\s+/g, ' ')
+            .replace(/^(VIP|SVIP)+\s*/i, '')
+            .replace(/(^|[：:\s])(VIP|SVIP)+(?=[\u4e00-\u9fa5A-Za-z])/ig, '$1')
+            .replace(/(\d{4}-\d{2}-\d{2})\s*(VIP|SVIP)+/ig, '$1 ')
+            .replace(/([^\s])第(\d+)(集|期)/g, '$1 第$2$3')
+            .replace(/(第\d+(?:集|期)[上下中]?)([^\s：:·，,.、])/g, '$1 $2')
+            .replace(/\s+([：:·，,.、])/g, '$1')
+            .replace(/([：:])\s+/g, '$1')
+            .trim();
+    }
+
+    function getCleanEpisodeText(sourceItem, link) {
+        const titleNodes = Array.from(sourceItem.querySelectorAll('.title, .name, [class*="title"], [class*="Title"], [class*="name"], [class*="Name"]'))
+            .filter(node => {
+                const text = (node.textContent || '').trim();
+                return text && text !== 'VIP';
+            });
+        const titleNode = titleNodes[titleNodes.length - 1] || null;
+        const rawText = (
+            (link && (link.getAttribute('title') || link.getAttribute('aria-label'))) ||
+            (titleNode && titleNode.textContent) ||
+            (link && link.textContent) ||
+            sourceItem.textContent ||
+            ''
+        ).trim();
+
+        return normalizeEpisodeTitleText(rawText);
+    }
+
+    function getFullscreenEpisodeMonths() {
+        return getMonthTabs().map(month => ({
+            key: getMonthKey(month),
+            text: month.textContent.trim(),
+            active: month.classList.contains('month-focus'),
+            node: month
+        })).filter(month => month.text);
+    }
+
+    function ensureFullscreenEpisodePanel() {
+        let panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (panel && panel.dataset.mgtvEpisodeVersion !== FULLSCREEN_EPISODE_UI_VERSION) {
+            panel.remove();
+            panel = null;
+        }
+        const container = getFullscreenContainer();
+
+        if (!panel) {
+            panel = document.createElement('div');
+            panel.id = 'mgtv_fullscreen_episode_panel';
+            panel.dataset.mgtvEpisodeVersion = FULLSCREEN_EPISODE_UI_VERSION;
+
+            const head = document.createElement('div');
+            head.className = 'mgtv-fullscreen-episode-head';
+
+            const title = document.createElement('span');
+            title.textContent = '选集';
+
+            const closeButton = document.createElement('button');
+            closeButton.type = 'button';
+            closeButton.className = 'mgtv-fullscreen-episode-close';
+            closeButton.textContent = '×';
+            closeButton.addEventListener('click', () => toggleFullscreenEpisodePanel(false));
+
+            const body = document.createElement('div');
+            body.className = 'mgtv-fullscreen-episode-body';
+
+            head.appendChild(title);
+            head.appendChild(closeButton);
+            panel.appendChild(head);
+            panel.appendChild(body);
+
+            panel.addEventListener('mouseenter', clearFullscreenEpisodeCloseTimer);
+            panel.addEventListener('mouseleave', () => scheduleFullscreenEpisodeClose());
+        }
+
+        if (panel.parentNode !== container) {
+            container.appendChild(panel);
+        }
+
+        return panel;
+    }
+
+    function syncFullscreenEpisodePanel() {
+        const panel = ensureFullscreenEpisodePanel();
+        const body = panel.querySelector('.mgtv-fullscreen-episode-body');
+        const sourceList = getPositiveVideoList();
+
+        if (!body) return panel;
+        body.textContent = '';
+
+        const months = getFullscreenEpisodeMonths();
+        if (months.length > 1) {
+            const monthList = document.createElement('div');
+            monthList.className = 'mgtv-fullscreen-episode-months';
+            months.forEach(month => {
+                const monthButton = document.createElement('button');
+                monthButton.type = 'button';
+                monthButton.className = 'mgtv-fullscreen-episode-month';
+                if (month.active) monthButton.classList.add('mgtv-fullscreen-episode-month-active');
+                monthButton.textContent = month.text;
+                monthButton.dataset.monthKey = month.key || month.text;
+                monthButton.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+                    clearFullscreenEpisodeCloseTimer();
+                    fullscreenEpisodeMonthSwitching = true;
+                    fullscreenEpisodeKeepOpenUntil = Date.now() + 1200;
+                    const monthSwitchToken = ++fullscreenEpisodeMonthSwitchToken;
+                    monthList.querySelectorAll('.mgtv-fullscreen-episode-month-active')
+                        .forEach(node => node.classList.remove('mgtv-fullscreen-episode-month-active'));
+                    monthButton.classList.add('mgtv-fullscreen-episode-month-active');
+                    month.node.click();
+                    const refreshMonthList = (finalRefresh = false) => {
+                        if (monthSwitchToken !== fullscreenEpisodeMonthSwitchToken) return;
+                        if (document.getElementById('mgtv_fullscreen_episode_panel')?.classList.contains('mgtv-fullscreen-episode-open')) {
+                            syncFullscreenEpisodePanel();
+                        }
+                        if (finalRefresh && monthSwitchToken === fullscreenEpisodeMonthSwitchToken) {
+                            fullscreenEpisodeMonthSwitching = false;
+                        }
+                    };
+                    setTimeout(() => refreshMonthList(false), 160);
+                    setTimeout(() => refreshMonthList(true), 560);
+                });
+                monthList.appendChild(monthButton);
+            });
+            body.appendChild(monthList);
+        }
+
+        if (!sourceList) {
+            const empty = document.createElement('div');
+            empty.className = 'mgtv-fullscreen-episode-empty';
+            empty.textContent = '播放列表还没加载出来';
+            body.appendChild(empty);
+            return panel;
+        }
+
+        const currentId = getMgtvVideoId(window.location.href);
+        const list = document.createElement('ul');
+        list.className = 'mgtv-fullscreen-episode-list';
+        const episodeEntries = [];
+
+        Array.from(sourceList.querySelectorAll('li[data-vid]')).forEach(sourceItem => {
+            const link = sourceItem.querySelector('a');
+            const vid = sourceItem.getAttribute('data-vid');
+            const text = getCleanEpisodeText(sourceItem, link);
+            if (!vid || !link || !text) return;
+            const fullText = (sourceItem.textContent || '').trim();
+            const dateMatch = (fullText.match(/(\d{4})-(\d{2})-(\d{2})/) || text.match(/(\d{4})-(\d{2})-(\d{2})/));
+            const group = dateMatch ? `${dateMatch[2]}月` : '';
+            const displayText = dateMatch && !text.includes(dateMatch[0])
+                ? `${dateMatch[0]} ${text}`
+                : text;
+            episodeEntries.push({ sourceItem, link, vid, text: displayText, group });
+        });
+
+        const maxTitleLength = episodeEntries.reduce((max, entry) => Math.max(max, entry.text.length), 0);
+        const averageTitleLength = episodeEntries.length
+            ? episodeEntries.reduce((sum, entry) => sum + entry.text.length, 0) / episodeEntries.length
+            : 0;
+        const hasDateGroups = episodeEntries.some(entry => entry.group);
+        if (hasDateGroups || maxTitleLength > 8 || averageTitleLength > 5) {
+            list.classList.add('mgtv-fullscreen-episode-list-long');
+        }
+
+        episodeEntries.forEach(({ sourceItem, link, vid, text }) => {
+            const item = document.createElement('li');
+            item.className = 'mgtv-fullscreen-episode-item';
+            item.setAttribute('data-vid', vid);
+            if (vid === currentId || sourceItem.classList.contains('playing') || sourceItem.classList.contains('focus')) {
+                item.classList.add('mgtv-fullscreen-episode-current');
+            }
+
+            const itemLink = document.createElement('a');
+            itemLink.className = 'mgtv-fullscreen-episode-link';
+            itemLink.href = link.href;
+            itemLink.textContent = text;
+            itemLink.title = text;
+
+            item.appendChild(itemLink);
+            list.appendChild(item);
+        });
+
+        if (!list.children.length) {
+            const empty = document.createElement('div');
+            empty.className = 'mgtv-fullscreen-episode-empty';
+            empty.textContent = '播放列表还没加载出来';
+            body.appendChild(empty);
+            return panel;
+        }
+
+        body.appendChild(list);
+
+        panel._mgtvCurrentEpisodeItem = currentId ? list.querySelector(`li[data-vid="${currentId}"]`) : list.querySelector('.mgtv-fullscreen-episode-current');
+
+        return panel;
+    }
+
+    function clearFullscreenEpisodeCloseTimer() {
+        if (fullscreenEpisodeCloseTimer) {
+            clearTimeout(fullscreenEpisodeCloseTimer);
+            fullscreenEpisodeCloseTimer = null;
+        }
+    }
+
+    function scheduleFullscreenEpisodeClose(delay = 360) {
+        clearFullscreenEpisodeCloseTimer();
+        fullscreenEpisodeCloseTimer = setTimeout(() => {
+            if (fullscreenEpisodeMonthSwitching) return;
+            if (Date.now() < fullscreenEpisodeKeepOpenUntil) {
+                scheduleFullscreenEpisodeClose(fullscreenEpisodeKeepOpenUntil - Date.now() + 120);
+                return;
+            }
+            const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+            if (panel && panel.matches(':hover')) return;
+            const button = document.getElementById('mgtv_fullscreen_episode_btn');
+            if (button && button.matches(':hover')) return;
+            toggleFullscreenEpisodePanel(false);
+        }, delay);
+    }
+
+    function refocusFullscreenAfterEpisodeSwitch(wasFullscreen, wasNativeFullscreen) {
+        if (!wasFullscreen || !wasNativeFullscreen) return;
+
+        let retries = 12;
+        const refocusToken = ++fullscreenEpisodeRefocusToken;
+        const keepFullscreen = () => {
+            if (refocusToken !== fullscreenEpisodeRefocusToken) return;
+            if (isAnyFullscreen()) return;
+            const player = getPlayerRoot();
+            if (wasNativeFullscreen && player && player.requestFullscreen) {
+                player.requestFullscreen().catch(() => {});
+            } else if (wasNativeFullscreen && player && player.webkitRequestFullscreen) {
+                try { player.webkitRequestFullscreen(); } catch (e) {}
+            }
+
+            retries -= 1;
+            if (retries > 0 && !isAnyFullscreen()) {
+                setTimeout(keepFullscreen, 500);
+            }
+        };
+
+        keepFullscreen();
+        setTimeout(keepFullscreen, 250);
+    }
+
+    function cancelFullscreenEpisodeRefocus() {
+        fullscreenEpisodeRefocusToken += 1;
+    }
+
+    function releaseFullscreenEpisodeFocus() {
+        const active = document.activeElement;
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        const button = document.getElementById('mgtv_fullscreen_episode_btn');
+        if (active && (
+            active === button ||
+            (button && button.contains(active)) ||
+            (panel && panel.contains(active))
+        ) && typeof active.blur === 'function') {
+            active.blur();
+        }
+
+        const focusTarget = document.querySelector('video') || getPlayerRoot() || document.body;
+        if (focusTarget && typeof focusTarget.focus === 'function') {
+            const hadTabIndex = focusTarget.hasAttribute('tabindex');
+            const oldTabIndex = focusTarget.getAttribute('tabindex');
+            if (!hadTabIndex) focusTarget.setAttribute('tabindex', '-1');
+            try { focusTarget.focus({ preventScroll: true }); } catch (e) {}
+            if (!hadTabIndex) {
+                setTimeout(() => focusTarget.removeAttribute('tabindex'), 0);
+            } else if (oldTabIndex !== null) {
+                focusTarget.setAttribute('tabindex', oldTabIndex);
+            }
+        }
+    }
+
+    function finishWebFullscreenExitCleanup() {
+        restoreScriptWebFullscreenPageStyle();
+        document.body.classList.remove('pip-web-fs-active', 'web-fs-active');
+        document.documentElement.classList.remove('pip-web-fs-active', 'web-fs-active');
+        removeFullscreenEpisodePanel();
+        const button = document.getElementById('mgtv_fullscreen_episode_btn');
+        if (button) {
+            button.classList.remove('mgtv-fullscreen-episode-active');
+            button.style.display = 'none';
+        }
+        fullscreenEpisodeStateSignature = '';
+    }
+
+    function rememberElementStyle(element, datasetKey) {
+        if (!element || element.dataset[datasetKey] !== undefined) return;
+        element.dataset[datasetKey] = element.getAttribute('style') || '__empty__';
+    }
+
+    function restoreElementStyle(element, datasetKey) {
+        if (!element || element.dataset[datasetKey] === undefined) return;
+        const oldStyle = element.dataset[datasetKey];
+        if (oldStyle === '__empty__') {
+            element.removeAttribute('style');
+        } else {
+            element.setAttribute('style', oldStyle);
+        }
+        delete element.dataset[datasetKey];
+    }
+
+    function lockScriptWebFullscreenPageStyle() {
+        rememberElementStyle(document.documentElement, 'mgtvScriptOldStyle');
+        rememberElementStyle(document.body, 'mgtvScriptOldStyle');
+
+        document.documentElement.style.overflow = 'hidden';
+        document.documentElement.style.height = '100%';
+        document.body.style.overflow = 'hidden';
+        document.body.style.height = '100%';
+    }
+
+    function restoreScriptWebFullscreenPageStyle() {
+        restoreElementStyle(document.documentElement, 'mgtvScriptOldStyle');
+        restoreElementStyle(document.body, 'mgtvScriptOldStyle');
+    }
+
+    function getScriptWebFullscreenContainer() {
+        return Array.from(document.querySelectorAll('.mgtv-script-web-fullscreen-container, .pip-web-fullscreen-container'))
+            .find(node => node.dataset.mgtvScriptWebFullscreen === 'true') || null;
+    }
+
+    function findScriptWebFullscreenRestoreHost(container) {
+        const anchor = document.querySelector('.mgtv-script-web-fullscreen-anchor[data-mgtv-script-web-fullscreen="true"], .pip-web-fullscreen-anchor[data-mgtv-script-web-fullscreen="true"]');
+        if (anchor && anchor.parentNode) return { anchor, parent: anchor.parentNode };
+
+        const savedTarget = scriptWebFullscreenRestoreMap.get(container);
+        if (savedTarget && savedTarget.parent && savedTarget.parent.isConnected) {
+            return savedTarget;
+        }
+
+        return null;
+    }
+
+    function restoreScriptWebFullscreenContainer(container) {
+        if (!container || container.dataset.mgtvScriptWebFullscreen !== 'true') return false;
+
+        const player = container.querySelector('#mgtv-player-wrap, .m-player-h5-new, .mango-player, .mgtv-player');
+        const restoreTarget = findScriptWebFullscreenRestoreHost(container);
+        if (player && restoreTarget && restoreTarget.parent) {
+            const beforeNode = restoreTarget.anchor ||
+                (restoreTarget.nextSibling && restoreTarget.nextSibling.parentNode === restoreTarget.parent
+                    ? restoreTarget.nextSibling
+                    : null);
+            restoreTarget.parent.insertBefore(player, beforeNode);
+        } else if (player) {
+            return false;
+        }
+        if (player) {
+            const oldStyle = player.dataset.mgtvScriptOldStyle;
+            if (oldStyle === undefined || oldStyle === '__empty__') {
+                player.removeAttribute('style');
+            } else {
+                player.setAttribute('style', oldStyle);
+            }
+            delete player.dataset.mgtvScriptOldStyle;
+            player.classList.remove('pip-web-fs-player', 'player-l');
+            player.classList.add('player-m');
+        }
+        if (restoreTarget && restoreTarget.anchor) restoreTarget.anchor.remove();
+        scriptWebFullscreenRestoreMap.delete(container);
+        container.remove();
+        finishWebFullscreenExitCleanup();
+        return true;
+    }
+
+    function forceScriptWebFullscreenEnter() {
+        const staleScriptContainer = getScriptWebFullscreenContainer();
+        if (staleScriptContainer) restoreScriptWebFullscreenContainer(staleScriptContainer);
+
+        if (isAnyFullscreen()) return false;
+        if (document.body.classList.contains('pip-web-fs-active') ||
+            document.body.classList.contains('web-fs-active')) return false;
+
+        const player = document.querySelector('#mgtv-player-wrap') ||
+            document.querySelector('.m-player-h5-new') ||
+            getPlayerRoot();
+        if (!player || player.closest('.mgtv-script-web-fullscreen-container, .pip-web-fullscreen-container')) return false;
+
+        const anchor = document.createElement('div');
+        anchor.className = 'mgtv-script-web-fullscreen-anchor';
+        anchor.dataset.mgtvScriptWebFullscreen = 'true';
+        const rect = player.getBoundingClientRect();
+        anchor.style.width = `${Math.max(1, rect.width)}px`;
+        anchor.style.height = `${Math.max(1, rect.height)}px`;
+        anchor.style.display = 'block';
+
+        const container = document.createElement('div');
+        container.className = 'mgtv-script-web-fullscreen-container';
+        container.dataset.mgtvScriptWebFullscreen = 'true';
+        container.style.position = 'fixed';
+        container.style.inset = '0';
+        container.style.zIndex = '2147483000';
+        container.style.width = '100vw';
+        container.style.height = '100vh';
+        container.style.background = '#000';
+        container.style.overflow = 'hidden';
+
+        lockScriptWebFullscreenPageStyle();
+        rememberElementStyle(player, 'mgtvScriptOldStyle');
+        scriptWebFullscreenRestoreMap.set(container, {
+            parent: player.parentNode,
+            nextSibling: player.nextSibling
+        });
+        player.parentNode.insertBefore(anchor, player);
+        document.body.appendChild(container);
+        container.appendChild(player);
+
+        player.style.position = 'absolute';
+        player.style.inset = '0';
+        player.style.width = '100vw';
+        player.style.height = '100vh';
+        player.style.maxWidth = '100vw';
+        player.style.maxHeight = '100vh';
+        player.style.margin = '0';
+        player.style.overflow = 'hidden';
+        player.classList.add('pip-web-fs-player');
+
+        document.body.classList.add('pip-web-fs-active');
+        ensureFullscreenEpisodeButton();
+        setTimeout(ensureFullscreenEpisodeButton, 260);
+        return true;
+    }
+
+    function scheduleMgtvWebFullscreenExitRepair() {
+        cancelFullscreenEpisodeRefocus();
+        const exitRepairToken = ++mgtvWebFullscreenExitRepairToken;
+        const cleanupResidualWebFullscreenExit = () => {
+            const scriptContainer = Array.from(document.querySelectorAll('.mgtv-script-web-fullscreen-container, .pip-web-fullscreen-container'))
+                .find(node => node.dataset.mgtvScriptWebFullscreen === 'true');
+            if (restoreScriptWebFullscreenContainer(scriptContainer)) return true;
+
+            if (!document.body.classList.contains('pip-web-fs-active') &&
+                !document.body.classList.contains('web-fs-active')) return false;
+
+            const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+            const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+            const normalPlayer = Array.from(document.querySelectorAll('#mgtv-player-wrap, .m-player-h5-new'))
+                .find(node => {
+                    if (node.closest('.pip-web-fullscreen-container')) return false;
+                    const rect = node.getBoundingClientRect();
+                    return rect.left > 8 &&
+                        rect.top > 8 &&
+                        rect.width > 300 &&
+                        rect.height > 180 &&
+                        rect.right <= viewportWidth + 80 &&
+                        rect.bottom <= document.documentElement.scrollHeight + 80;
+                });
+            const fullscreenContainer = Array.from(document.querySelectorAll('.pip-web-fullscreen-container'))
+                .find(node => {
+                    const rect = node.getBoundingClientRect();
+                    return rect.width >= viewportWidth * 0.82 &&
+                        rect.height >= viewportHeight * 0.72;
+                });
+
+            if (!normalPlayer || !fullscreenContainer) return false;
+
+            const fullscreenPlayer = Array.from(fullscreenContainer.querySelectorAll('.mango-player, .mgtv-player'))
+                .find(node => {
+                    const rect = node.getBoundingClientRect();
+                    return rect.width > 300 && rect.height > 180;
+                });
+            const hasPlayableVideo = !!fullscreenContainer.querySelector('video');
+            if (fullscreenPlayer && !normalPlayer.contains(fullscreenPlayer)) {
+                fullscreenPlayer.classList.remove('pip-web-fs-player', 'player-l');
+                fullscreenPlayer.classList.add('player-m');
+                ['width', 'height', 'max-width', 'max-height'].forEach(prop => {
+                    try { fullscreenPlayer.style.removeProperty(prop); } catch (e) {}
+                });
+                normalPlayer.appendChild(fullscreenPlayer);
+            } else if (hasPlayableVideo) {
+                return false;
+            }
+
+            fullscreenContainer.remove();
+            document.querySelectorAll('.mgtv-script-web-fullscreen-anchor, .pip-web-fullscreen-anchor').forEach(node => node.remove());
+            finishWebFullscreenExitCleanup();
+            return true;
+        };
+
+        [0, 80, 180, 520, 1000, 1600, 2400].forEach(delay => {
+            setTimeout(() => {
+                if (exitRepairToken !== mgtvWebFullscreenExitRepairToken) return;
+                if (cleanupResidualWebFullscreenExit()) return;
+                if (!document.body.classList.contains('pip-web-fs-active') &&
+                    !document.body.classList.contains('web-fs-active')) return;
+
+                const player = getPlayerRoot();
+                if (!player) return;
+                const rect = player.getBoundingClientRect();
+                const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+                const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+                const stillLooksWebFullscreen = Math.abs(rect.x) < 4 &&
+                    Math.abs(rect.y) < 4 &&
+                    rect.width >= viewportWidth * 0.82 &&
+                    rect.height >= viewportHeight * 0.72;
+                if (stillLooksWebFullscreen) return;
+
+                finishWebFullscreenExitCleanup();
+            }, delay);
+        });
+    }
+
+    function scheduleMgtvWebFullscreenEnterFallback() {
+        mgtvWebFullscreenExitRepairToken += 1;
+        const triggerWebFullscreen = () => {
+            if (isAnyFullscreen()) return;
+            if (document.body.classList.contains('pip-web-fs-active') ||
+                document.body.classList.contains('web-fs-active')) return;
+
+            const player = document.querySelector('#mgtv-player-wrap') || getPlayerRoot();
+            if (player) {
+                const rect = player.getBoundingClientRect();
+                const eventOptions = {
+                    bubbles: true,
+                    clientX: Math.max(0, rect.left + rect.width / 2),
+                    clientY: Math.max(0, rect.top + rect.height / 2)
+                };
+                player.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
+                player.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+                player.dispatchEvent(new MouseEvent('mousemove', eventOptions));
+            }
+
+            const visibleButton = Array.from(document.querySelectorAll('.webfullscreenBtn, [class*="webfullscreen"], [class*="webFullscreen"], [class*="webZoom"]'))
+                .find(node => {
+                    const rect = node.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                });
+            const webFullscreenButton = visibleButton ||
+                document.querySelector('#mgtv-player-wrap .webfullscreenBtn') ||
+                document.querySelector('.mango-player .webfullscreenBtn') ||
+                document.querySelector('.mgtv-player .webfullscreenBtn') ||
+                document.querySelector('.webfullscreenBtn');
+            if (webFullscreenButton) {
+                const rect = webFullscreenButton.getBoundingClientRect();
+                const eventOptions = {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window,
+                    clientX: Math.max(0, rect.left + rect.width / 2),
+                    clientY: Math.max(0, rect.top + rect.height / 2)
+                };
+                webFullscreenButton.dispatchEvent(new MouseEvent('mouseenter', eventOptions));
+                webFullscreenButton.dispatchEvent(new MouseEvent('mouseover', eventOptions));
+                webFullscreenButton.dispatchEvent(new MouseEvent('mousedown', eventOptions));
+                webFullscreenButton.dispatchEvent(new MouseEvent('mouseup', eventOptions));
+                webFullscreenButton.click();
+                setTimeout(ensureFullscreenEpisodeButton, 260);
+            }
+        };
+
+        [80, 180, 320, 560, 900, 1400, 2200, 3200].forEach(delay => setTimeout(triggerWebFullscreen, delay));
+        [650, 1200].forEach(delay => {
+            setTimeout(() => {
+                if (isAnyFullscreen()) return;
+                if (document.body.classList.contains('pip-web-fs-active') ||
+                    document.body.classList.contains('web-fs-active')) return;
+                forceScriptWebFullscreenEnter();
+            }, delay);
+        });
+    }
+
+    function scrollFullscreenEpisodeCurrentIntoView() {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (!panel || !panel.classList.contains('mgtv-fullscreen-episode-open')) return;
+        const body = panel.querySelector('.mgtv-fullscreen-episode-body');
+        const current = panel.querySelector('.mgtv-fullscreen-episode-current');
+        if (!body || !current) return;
+        const targetTop = current.offsetTop - body.clientHeight / 2 + current.offsetHeight / 2;
+        body.scrollTop = Math.max(0, targetTop);
+    }
+
+    function toggleFullscreenEpisodePanel(forceOpen) {
+        const button = document.getElementById('mgtv_fullscreen_episode_btn');
+        let panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        const willOpen = typeof forceOpen === 'boolean'
+            ? forceOpen
+            : !(panel && panel.classList.contains('mgtv-fullscreen-episode-open'));
+
+        if (willOpen) {
+            panel = syncFullscreenEpisodePanel();
+        } else {
+            panel = panel || ensureFullscreenEpisodePanel();
+        }
+
+        panel.classList.toggle('mgtv-fullscreen-episode-open', willOpen);
+        if (button) button.classList.toggle('mgtv-fullscreen-episode-active', willOpen);
+        if (willOpen) {
+            requestAnimationFrame(scrollFullscreenEpisodeCurrentIntoView);
+            setTimeout(scrollFullscreenEpisodeCurrentIntoView, 120);
+        }
+        if (!willOpen) {
+            fullscreenEpisodeMonthSwitching = false;
+            clearFullscreenEpisodeCloseTimer();
+        }
+    }
+
+    function handleFullscreenEpisodePanelClick(e) {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (!panel || !panel.contains(e.target)) return;
+
+        const clonedItem = e.target.closest('li[data-vid]');
+        const clonedLink = e.target.closest('a');
+        if (!clonedItem && !clonedLink) return;
+
+        const vid = clonedItem ? clonedItem.getAttribute('data-vid') : null;
+        const href = clonedLink ? clonedLink.href : null;
+        const sourceList = getPositiveVideoList();
+        let sourceLink = null;
+
+        if (sourceList && vid) {
+            sourceLink = sourceList.querySelector(`li[data-vid="${vid}"] a`);
+        }
+        if (!sourceLink && sourceList && href) {
+            sourceLink = Array.from(sourceList.querySelectorAll('a')).find(link => link.href === href);
+        }
+        if (!sourceLink) return;
+
+        e.preventDefault();
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
+
+        const wasNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+        const wasFullscreen = isAnyFullscreen();
+        toggleFullscreenEpisodePanel(false);
+        releaseFullscreenEpisodeFocus();
+        sourceLink.click();
+        setTimeout(releaseFullscreenEpisodeFocus, 0);
+        setTimeout(releaseFullscreenEpisodeFocus, 300);
+        refocusFullscreenAfterEpisodeSwitch(wasFullscreen, wasNativeFullscreen);
+    }
+
+    document.addEventListener('click', handleFullscreenEpisodePanelClick, true);
+
+    document.addEventListener('click', (e) => {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (!panel || !panel.classList.contains('mgtv-fullscreen-episode-open')) return;
+        if (fullscreenEpisodeMonthSwitching || Date.now() < fullscreenEpisodeKeepOpenUntil) return;
+
+        const button = document.getElementById('mgtv_fullscreen_episode_btn');
+        if ((button && button.contains(e.target)) || panel.contains(e.target)) return;
+
+        toggleFullscreenEpisodePanel(false);
+    }, true);
+
+    function ensureFullscreenEpisodeButton() {
+        const shouldShow = isAnyFullscreen();
+        let button = document.getElementById('mgtv_fullscreen_episode_btn');
+        if (button && button.dataset.mgtvEpisodeVersion !== FULLSCREEN_EPISODE_UI_VERSION) {
+            button.remove();
+            button = null;
+        }
+        const mount = getFullscreenEpisodeMount();
+        const stateSignature = getFullscreenEpisodeStateSignature();
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        const keepSwitchingPanel = fullscreenEpisodeMonthSwitching &&
+            panel &&
+            panel.classList.contains('mgtv-fullscreen-episode-open');
+        if (fullscreenEpisodeStateSignature && fullscreenEpisodeStateSignature !== stateSignature && !keepSwitchingPanel) {
+            removeFullscreenEpisodePanel();
+        }
+        fullscreenEpisodeStateSignature = stateSignature;
+
+        if (!button) {
+            button = document.createElement('div');
+            button.id = 'mgtv_fullscreen_episode_btn';
+            button.dataset.mgtvEpisodeVersion = FULLSCREEN_EPISODE_UI_VERSION;
+            button.textContent = '选集';
+            button.setAttribute('role', 'button');
+            button.setAttribute('tabindex', '0');
+            button.addEventListener('mouseenter', () => {
+                clearFullscreenEpisodeCloseTimer();
+                toggleFullscreenEpisodePanel(true);
+            });
+            button.addEventListener('mouseleave', () => scheduleFullscreenEpisodeClose());
+            button.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                toggleFullscreenEpisodePanel();
+            });
+            button.addEventListener('keydown', (e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return;
+                e.preventDefault();
+                toggleFullscreenEpisodePanel();
+            });
+        }
+
+        if (mount.speedControl && mount.speedControl.parentElement) {
+            if (button.parentNode !== mount.parent || button.previousElementSibling !== mount.speedControl) {
+                mount.speedControl.insertAdjacentElement('afterend', button);
+            }
+        } else if (mount.beforeNode && mount.beforeNode.parentElement === mount.parent) {
+            if (button.parentNode !== mount.parent || button.nextElementSibling !== mount.beforeNode) {
+                mount.parent.insertBefore(button, mount.beforeNode);
+            }
+        } else if (button.parentNode !== mount.parent) {
+            mount.parent.appendChild(button);
+        }
+
+        button.style.display = shouldShow ? 'flex' : 'none';
+        if (!shouldShow) toggleFullscreenEpisodePanel(false);
+        if (shouldShow) ensureFullscreenEpisodePanel();
     }
 
     function getVideoListFirstVid(videoList) {
@@ -1067,6 +2187,7 @@
         ensurePersistentTooltips();
         injectEpisodeTitleWrapStyle(); // 注入视频列表名称自动换行样式
         initPlaylistEnhance(); // 播放列表 Tab 记忆 & 跨月连播
+        ensureFullscreenEpisodeButton(); // 全屏控制栏选集入口
         // 初始化屏蔽词管理器
         if (!blocklistManagerInstance) {
             blocklistManagerInstance = new BlocklistManager();
@@ -1539,6 +2660,7 @@
         // 尝试更新全屏 tooltip 并且添加弹幕快捷键提示
         modifyFullscreenTooltip();
         addDanmuShortcutTooltip();
+        ensureFullscreenEpisodeButton();
         
         // 顺势检查需要重新监听的 video 元素
         startObserveVideo();
