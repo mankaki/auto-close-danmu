@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.5.35
+// @version      2.5.46
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、Tab 记忆、跨月自动连播、全屏选集与全屏下 ESC 输入保护
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -132,27 +132,27 @@
         button.id = 'autoDanmuToggleBtn';
         button.style.position = 'fixed';
         button.style.bottom = '9px'; // 距离底部9px
-        button.style.right = '0'; // 紧贴右边
+        button.style.right = '8px';
         button.style.zIndex = '9999';
         button.style.display = 'flex';
         button.style.alignItems = 'center';
         button.style.justifyContent = 'center';
-        button.style.width = '52px';
+        button.style.width = '40px';
         button.style.height = '40px';
-        button.style.borderTopLeftRadius = '20px';
-        button.style.borderBottomLeftRadius = '20px';
-        button.style.borderTopRightRadius = '0';
-        button.style.borderBottomRightRadius = '0';
-        button.style.backgroundColor = '#fff';
-        button.style.boxShadow = '-2px 2px 8px rgba(0, 0, 0, 0.1)';
+        button.style.boxSizing = 'border-box';
+        button.style.borderRadius = '50%';
+        button.style.border = '1px solid rgba(255, 255, 255, 0.18)';
+        button.style.backgroundColor = 'rgba(0, 0, 0, 0.18)';
+        button.style.boxShadow = 'none';
         button.style.cursor = 'pointer';
-        button.style.transition = 'background-color 0.3s';
+        button.style.transition = 'border-color 0.2s, background-color 0.2s';
 
         // 图标 img
         const icon = document.createElement('img');
         icon.style.width = '24px';
         icon.style.height = '24px';
-        icon.style.marginRight = '-4px'; // 让图标更靠右，减少内边距空隙
+        icon.style.filter = 'invert(1)';
+        icon.style.opacity = '0.76';
         icon.src = autoCloseDanmu
             ? 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik02IDE4aDEyYzMuMzExIDAgNi0yLjY4OSA2LTZzLTIuNjg5LTYtNi02aC0xMi4wMzljLTMuMjkzLjAyMS01Ljk2MSAyLjcwMS01Ljk2MSA2IDAgMy4zMTEgMi42ODggNiA2IDZ6bTEyLTEwYy0yLjIwOCAwLTQgMS43OTItNCA0czEuNzkyIDQgNCA0IDQtMS43OTIgNC00LTEuNzkyLTQtNC00eiIvPjwvc3ZnPg=='
             : 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgZmlsbC1ydWxlPSJldmVub2RkIiBjbGlwLXJ1bGU9ImV2ZW5vZGQiPjxwYXRoIGQ9Ik0xOCAxOGgtMTJjLTMuMzExIDAtNi0yLjY4OS02LTZzMi42ODktNiA2LTZoMTIuMDM5YzMuMjkzLjAyMSA1Ljk2MSAyLjcwMSA1Ljk2MSA2IDAgMy4zMTEtMi42ODggNi02IDZ6bTAtMTBoLTEyYy0yLjIwOCAwLTQgMS43OTItNCA0czEuNzkyIDQgNCA0aDEyYzIuMjA4IDAgNC0xLjc5MiA0LTQgMC0yLjE5OS0xLjc3OC0zLjk4Ni0zLjk3NC00aC0uMDI2em0tMTIgMWMxLjY1NiAwIDMgMS4zNDQgMyAzcy0xLjM0NCAzLTMgMy0zLTEuMzQ0LTMtMyAxLjM0NC0zIDMtM3oiLz48L3N2Zz4=';
@@ -168,10 +168,12 @@
         });
 
         button.addEventListener('mouseenter', () => {
-            button.style.backgroundColor = '#ff5f00';
+            button.style.backgroundColor = 'rgba(255, 95, 0, 0.22)';
+            button.style.borderColor = 'rgba(255, 95, 0, 0.8)';
         });
         button.addEventListener('mouseleave', () => {
-            button.style.backgroundColor = '#fff';
+            button.style.backgroundColor = 'rgba(0, 0, 0, 0.18)';
+            button.style.borderColor = 'rgba(255, 255, 255, 0.18)';
         });
 
         document.body.appendChild(button);
@@ -524,20 +526,20 @@
 
             #mgtv_fullscreen_episode_panel {
                 position: fixed !important;
-                right: 92px !important;
-                bottom: 72px !important;
+                right: auto !important;
+                bottom: 64px !important;
                 width: min(380px, calc(100vw - 48px));
                 max-height: min(58vh, 560px);
                 z-index: 2147483647;
                 display: none;
-                overflow: hidden;
+                overflow: visible;
                 box-sizing: border-box;
                 color: #fff;
-                background: rgba(6, 8, 18, 0.94);
-                border: 0;
+                background: rgba(7, 8, 15, 0.92);
+                border: 1px solid rgba(255, 255, 255, 0.08);
                 border-radius: 8px;
                 box-shadow: 0 14px 38px rgba(0, 0, 0, 0.42);
-                backdrop-filter: blur(8px);
+                backdrop-filter: blur(10px);
             }
 
             #mgtv_fullscreen_episode_panel.mgtv-fullscreen-episode-open {
@@ -575,8 +577,10 @@
             }
 
             #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-body {
+                min-height: 0;
                 overflow: auto;
                 padding: 8px;
+                border-radius: 8px;
                 scrollbar-width: thin;
                 scrollbar-color: rgba(255, 255, 255, 0.36) transparent;
             }
@@ -598,9 +602,17 @@
             #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-months {
                 display: flex;
                 gap: 8px;
-                padding: 8px 8px 2px;
+                padding: 4px 8px;
                 overflow-x: auto;
                 scrollbar-width: none;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-filter-group:first-child {
+                padding-top: 4px;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-filter-group:last-of-type {
+                padding-bottom: 6px;
             }
 
             #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-months::-webkit-scrollbar {
@@ -654,6 +666,7 @@
                 display: flex !important;
                 align-items: center;
                 justify-content: center;
+                width: 100%;
                 min-height: 36px;
                 padding: 0 8px;
                 box-sizing: border-box;
@@ -667,6 +680,8 @@
                 text-decoration: none !important;
                 white-space: normal;
                 word-break: break-word;
+                cursor: pointer;
+                font-family: inherit;
             }
 
             #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-list-long .mgtv-fullscreen-episode-link {
@@ -687,6 +702,46 @@
                 padding: 20px;
                 color: rgba(255, 255, 255, 0.72);
                 text-align: center;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-more {
+                display: block;
+                width: calc(100% - 16px);
+                min-height: 36px;
+                margin: 7px 8px 8px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 18px;
+                color: rgba(255, 255, 255, 0.68);
+                background: rgba(255, 255, 255, 0.05);
+                font: inherit;
+                cursor: pointer;
+                transition: color 0.2s, border-color 0.2s, background-color 0.2s;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-footer {
+                display: none;
+                flex: 0 0 auto;
+                border-top: 1px solid rgba(255, 255, 255, 0.07);
+                border-radius: 0 0 8px 8px;
+                background: rgba(7, 8, 15, 0.98);
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-more:hover {
+                color: #ff5f00;
+                border-color: rgba(255, 95, 0, 0.55);
+                background: rgba(255, 95, 0, 0.1);
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-more.mgtv-fullscreen-episode-more--expanded {
+                color: #fff;
+                border-color: rgba(255, 95, 0, 0.88);
+                background: rgba(255, 95, 0, 0.24);
+                box-shadow: 0 0 0 1px rgba(255, 95, 0, 0.12), 0 6px 18px rgba(0, 0, 0, 0.28);
+                font-weight: 600;
+            }
+
+            #mgtv_fullscreen_episode_panel .mgtv-fullscreen-episode-more.mgtv-fullscreen-episode-more--expanded:hover {
+                background: rgba(255, 95, 0, 0.34);
             }
         `;
     }
@@ -864,24 +919,123 @@
     }
 
     function getMonthTabs() {
-        return Array.from(document.querySelectorAll('.time-select .month.scroll-item'));
+        const legacyTabs = Array.from(document.querySelectorAll('.time-select .month.scroll-item'));
+        if (legacyTabs.length) return legacyTabs;
+
+        // 2026 新版右侧选集面板：年份/类型都由 overflow tabs 控制，measure 中还有一份隐藏副本。
+        return Array.from(document.querySelectorAll(
+            '.mgtv-player-aside-video-selector .mgtv-player-aside-overflow-tabs__items > .mgtv-player-aside-overflow-tabs__item'
+        )).filter(tab => !tab.closest('[aria-hidden="true"]'));
     }
 
     function getFocusedMonth() {
-        return document.querySelector('.time-select .month.scroll-item.month-focus');
+        return document.querySelector('.time-select .month.scroll-item.month-focus') ||
+            document.querySelector('.mgtv-player-aside-video-selector .mgtv-player-aside-overflow-tabs__items > .mgtv-player-aside-overflow-tabs__item--active');
     }
 
     function getPositiveVideoList() {
-        return document.querySelector('[node-type="positive-videolist"] .aside-videolist') ||
+        return document.querySelector('.mgtv-player-aside__drawer-wrap--active .mgtv-player-aside-video-selector') ||
+            document.querySelector('[node-type="positive-videolist"] .aside-videolist') ||
             document.querySelector('[node-type="episode-aside-videolist"] .episode-items') ||
-            document.querySelector('.m-tv-aside-list [node-type="episode-aside-videolist"] .episode-items');
+            document.querySelector('.m-tv-aside-list [node-type="episode-aside-videolist"] .episode-items') ||
+            document.querySelector('.mgtv-player-aside-video-selector');
+    }
+
+    function getCollapsedNewEpisodeSelector() {
+        return Array.from(document.querySelectorAll('.mgtv-player-aside-video-selector'))
+            .find(selector => !selector.closest('.mgtv-player-aside__drawer-wrap')) || null;
+    }
+
+    function requestFullNewEpisodeList() {
+        const expanded = document.querySelector('.mgtv-player-aside__drawer-wrap--active .mgtv-player-aside-video-selector');
+        if (expanded) return 'expanded';
+
+        const collapsed = getCollapsedNewEpisodeSelector();
+        const moreButton = collapsed && collapsed.querySelector('.mgtv-player-aside-video-selector__overflow-btn');
+        const elapsed = Date.now() - fullscreenEpisodeExpandRequestedAt;
+        if (!moreButton) {
+            // 点击后原按钮可能先被卸载、抽屉稍后才挂载；短暂视为等待中，而不是误判为不支持。
+            if (fullscreenEpisodeOpenedNativeDrawer && elapsed < 2500) return 'pending';
+            return 'unavailable';
+        }
+        if (elapsed <= 800) return 'pending';
+
+        fullscreenEpisodeExpandRequestedAt = Date.now();
+        fullscreenEpisodeOpenedNativeDrawer = true;
+        moreButton.click();
+        return 'requested';
+    }
+
+    function closeNativeEpisodeDrawer(force = false) {
+        if (!force && !fullscreenEpisodeOpenedNativeDrawer) return false;
+        const drawer = document.querySelector('.mgtv-player-aside__drawer-wrap--active');
+        const closeButton = drawer && drawer.querySelector('.mgtv-player-aside-drawer__close');
+        if (!closeButton) return false;
+        fullscreenEpisodeOpenedNativeDrawer = false;
+        closeButton.click();
+        return true;
+    }
+
+    function cleanupScriptOpenedNativeEpisodeDrawer(resetFlag = false) {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        if (panel && panel.classList.contains('mgtv-fullscreen-episode-open')) return false;
+        const closed = closeNativeEpisodeDrawer(false);
+        if (resetFlag) fullscreenEpisodeOpenedNativeDrawer = false;
+        return closed;
+    }
+
+    function getEpisodeSourceItems(videoList) {
+        if (!videoList) return [];
+        const legacyItems = Array.from(videoList.querySelectorAll('li[data-vid]'));
+        if (legacyItems.length) return legacyItems;
+
+        return Array.from(videoList.querySelectorAll('.mgtv-player-aside-image-selector__card'))
+            .filter(item => {
+                const tag = item.querySelector('.mgtv-player-aside-image-selector__tag');
+                return !tag || (tag.textContent || '').trim() !== '推荐';
+            });
+    }
+
+    function isCurrentEpisodeSourceItem(item) {
+        return !!item && (
+            item.classList.contains('playing') ||
+            item.classList.contains('focus') ||
+            item.classList.contains('mgtv-player-aside-image-selector__card--active')
+        );
+    }
+
+    function getEpisodeSourceAction(item) {
+        if (!item) return null;
+        return item.matches('button, a') ? item : item.querySelector('a, button');
     }
 
     let playlistLocateTimer = null;
     let playlistLocateTargetVideoId = null;
     let playlistLocateDoneVideoId = null;
-    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.34';
+    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.46';
+    const FULLSCREEN_EPISODE_EXPANDED_KEY = 'mgtv_fullscreen_episode_expanded';
+    function loadFullscreenEpisodeExpandedPreference() {
+        try {
+            return localStorage.getItem(FULLSCREEN_EPISODE_EXPANDED_KEY) === 'true';
+        } catch (e) {
+            return false;
+        }
+    }
+
+    function saveFullscreenEpisodeExpandedPreference(expanded) {
+        fullscreenEpisodeExpandedPreference = !!expanded;
+        try {
+            localStorage.setItem(FULLSCREEN_EPISODE_EXPANDED_KEY, String(fullscreenEpisodeExpandedPreference));
+        } catch (e) {}
+    }
+
     let fullscreenEpisodeCloseTimer = null;
+    let fullscreenEpisodeLoadTimer = null;
+    let fullscreenEpisodeLoadRetries = 0;
+    let fullscreenEpisodeExpandRequestedAt = 0;
+    let fullscreenEpisodeExpandedPreference = loadFullscreenEpisodeExpandedPreference();
+    let fullscreenEpisodeOpenedNativeDrawer = false;
+    let fullscreenEpisodeSelectionInProgress = false;
     let fullscreenEpisodeStateSignature = '';
     let fullscreenEpisodeKeepOpenUntil = 0;
     let fullscreenEpisodeMonthSwitching = false;
@@ -896,33 +1050,45 @@
         const videoList = getPositiveVideoList();
         if (!videoList || !videoId) return null;
 
-        const currentItem = Array.from(videoList.querySelectorAll('li[data-vid]'))
+        const currentItem = getEpisodeSourceItems(videoList)
             .find(item => item.getAttribute('data-vid') === videoId);
         if (currentItem) return currentItem;
 
-        return allowPlayingFallback ? videoList.querySelector('li.playing[data-vid]') : null;
+        const activeItem = getEpisodeSourceItems(videoList).find(isCurrentEpisodeSourceItem) || null;
+        return allowPlayingFallback ? activeItem : null;
     }
 
     function getScrollableAncestor(element) {
         let node = element ? element.parentElement : null;
-        while (node && node !== document.body) {
-            if (node.scrollHeight > node.clientHeight + 1) return node;
+        while (node && node !== document.body && node !== document.documentElement) {
+            const style = window.getComputedStyle(node);
+            const canScrollY = /(auto|scroll|overlay)/.test(style.overflowY);
+            if (canScrollY && node.scrollHeight > node.clientHeight + 1) return node;
             node = node.parentElement;
         }
         return null;
     }
 
     function scrollPlaylistItemIntoView(item) {
+        const oldScrollX = window.scrollX;
+        const oldScrollY = window.scrollY;
         const scrollContainer = getScrollableAncestor(item);
-        if (!scrollContainer) {
-            item.scrollIntoView({ block: 'center', inline: 'nearest' });
-            return;
-        }
+        if (!scrollContainer) return;
 
         const itemRect = item.getBoundingClientRect();
         const containerRect = scrollContainer.getBoundingClientRect();
         const centeredOffset = (itemRect.top - containerRect.top) - ((containerRect.height - itemRect.height) / 2);
         scrollContainer.scrollTop += centeredOffset;
+
+        // 新版侧栏嵌套在页面滚动布局中；定位列表时始终锁住页面，避免把播放器滚出可视区。
+        const restorePagePosition = () => {
+            if (window.scrollX !== oldScrollX || window.scrollY !== oldScrollY) {
+                window.scrollTo(oldScrollX, oldScrollY);
+            }
+        };
+        restorePagePosition();
+        requestAnimationFrame(restorePagePosition);
+        setTimeout(restorePagePosition, 120);
     }
 
     function scheduleLocateCurrentVideoInPlaylist() {
@@ -937,9 +1103,19 @@
 
         playlistLocateTargetVideoId = videoId;
         let retries = 24;
+        let attempts = 0;
+        let activeCandidateKey = null;
+        let activeCandidateStableChecks = 0;
+
+        const finishLocate = (item) => {
+            scrollPlaylistItemIntoView(item);
+            playlistLocateDoneVideoId = videoId;
+            playlistLocateTargetVideoId = null;
+        };
 
         const tryLocate = () => {
             playlistLocateTimer = null;
+            attempts += 1;
 
             const currentVideoId = getMgtvVideoId(window.location.href);
             if (currentVideoId !== videoId) {
@@ -950,10 +1126,31 @@
 
             const item = findCurrentPlaylistItem(videoId);
             if (item) {
-                scrollPlaylistItemIntoView(item);
-                playlistLocateDoneVideoId = videoId;
-                playlistLocateTargetVideoId = null;
+                finishLocate(item);
                 return;
+            }
+
+            const currentList = getPositiveVideoList();
+            if (currentList && currentList.matches('.mgtv-player-aside-video-selector')) {
+                const activeCandidate = findCurrentPlaylistItem(videoId, true);
+                if (activeCandidate) {
+                    const candidateKey = getCleanEpisodeText(activeCandidate, getEpisodeSourceAction(activeCandidate));
+                    if (candidateKey && candidateKey === activeCandidateKey) {
+                        activeCandidateStableChecks += 1;
+                    } else {
+                        activeCandidateKey = candidateKey;
+                        activeCandidateStableChecks = candidateKey ? 1 : 0;
+                    }
+
+                    // URL 变化后至少等待约 1.3 秒，并要求 active 卡片连续稳定，避免误认尚未卸载的旧卡片。
+                    if (attempts >= 6 && activeCandidateStableChecks >= 2) {
+                        finishLocate(activeCandidate);
+                        return;
+                    }
+                } else {
+                    activeCandidateKey = null;
+                    activeCandidateStableChecks = 0;
+                }
             }
 
             retries -= 1;
@@ -964,10 +1161,9 @@
 
             const fallbackItem = findCurrentPlaylistItem(videoId, true);
             if (fallbackItem) {
-                scrollPlaylistItemIntoView(fallbackItem);
-                playlistLocateDoneVideoId = videoId;
+                finishLocate(fallbackItem);
             }
-            playlistLocateTargetVideoId = null;
+            if (!fallbackItem) playlistLocateTargetVideoId = null;
         };
 
         playlistLocateTimer = setTimeout(tryLocate, 100);
@@ -1099,6 +1295,16 @@
     }
 
     function getCleanEpisodeText(sourceItem, link) {
+        const newTitle = sourceItem.querySelector('.mgtv-player-aside-image-selector__title');
+        const newDate = sourceItem.querySelector('.mgtv-card__content__duration');
+        if (newTitle) {
+            const title = (newTitle.getAttribute('title') || newTitle.textContent || '').trim();
+            const date = (newDate && newDate.textContent || '').trim();
+            const rawTag = (sourceItem.querySelector('.mgtv-player-aside-image-selector__tag')?.textContent || '').trim();
+            const episodeTag = rawTag === '正片' || rawTag === '预告' ? `【${rawTag}】` : '';
+            return normalizeEpisodeTitleText(`${date} ${episodeTag} ${title}`);
+        }
+
         const titleNodes = Array.from(sourceItem.querySelectorAll('.title, .name, [class*="title"], [class*="Title"], [class*="name"], [class*="Name"]'))
             .filter(node => {
                 const text = (node.textContent || '').trim();
@@ -1116,13 +1322,104 @@
         return normalizeEpisodeTitleText(rawText);
     }
 
-    function getFullscreenEpisodeMonths() {
-        return getMonthTabs().map(month => ({
-            key: getMonthKey(month),
-            text: month.textContent.trim(),
-            active: month.classList.contains('month-focus'),
-            node: month
-        })).filter(month => month.text);
+    function mapFullscreenEpisodeTabs(tabs) {
+        return tabs.map(tab => ({
+            key: getMonthKey(tab),
+            text: tab.textContent.trim(),
+            active: tab.classList.contains('month-focus') ||
+                tab.classList.contains('mgtv-player-aside-overflow-tabs__item--active'),
+            node: tab
+        })).filter(tab => tab.text);
+    }
+
+    function getFullscreenEpisodeFilterGroups(sourceList) {
+        if (sourceList && sourceList.matches('.mgtv-player-aside-video-selector')) {
+            const rows = Array.from(sourceList.querySelectorAll(':scope > .mgtv-player-aside-video-selector__overflow-row'));
+            const groups = rows.map(row => {
+                const tabs = Array.from(row.querySelectorAll(
+                    ':scope > .mgtv-player-aside-overflow-tabs__line > .mgtv-player-aside-overflow-tabs__items > .mgtv-player-aside-overflow-tabs__item'
+                ));
+                return mapFullscreenEpisodeTabs(tabs);
+            }).filter(group => group.length);
+            if (groups.length) return groups;
+        }
+
+        const legacyTabs = mapFullscreenEpisodeTabs(getMonthTabs());
+        return legacyTabs.length ? [legacyTabs] : [];
+    }
+
+    function waitForFullscreenEpisodeExpandedState(expectedExpanded, retries = 16) {
+        const checkState = () => {
+            const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+            if (!panel || !panel.classList.contains('mgtv-fullscreen-episode-open')) return;
+
+            const expandedSelector = document.querySelector(
+                '.mgtv-player-aside__drawer-wrap--active .mgtv-player-aside-video-selector'
+            );
+            const expanded = !!expandedSelector;
+            const expandedItemsReady = !expectedExpanded ||
+                (expandedSelector && getEpisodeSourceItems(expandedSelector).length > 0);
+            if (expanded === expectedExpanded && expandedItemsReady) {
+                syncFullscreenEpisodePanel();
+                requestAnimationFrame(scrollFullscreenEpisodeCurrentIntoView);
+                setTimeout(scrollFullscreenEpisodeCurrentIntoView, 120);
+                return;
+            }
+
+            retries -= 1;
+            if (retries > 0) {
+                setTimeout(checkState, 120);
+            } else {
+                syncFullscreenEpisodePanel();
+            }
+        };
+        setTimeout(checkState, 80);
+    }
+
+    function appendFullscreenEpisodeMoreButton(footer, sourceList) {
+        if (!footer || !sourceList || !sourceList.matches('.mgtv-player-aside-video-selector')) return;
+        footer.style.display = 'block';
+        const expanded = !!sourceList.closest('.mgtv-player-aside__drawer-wrap--active');
+        const collapsedMoreButton = getCollapsedNewEpisodeSelector()?.querySelector(
+            '.mgtv-player-aside-video-selector__overflow-btn'
+        );
+        if (!expanded && !collapsedMoreButton) {
+            footer.style.display = 'none';
+            return;
+        }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'mgtv-fullscreen-episode-more';
+        if (expanded) button.classList.add('mgtv-fullscreen-episode-more--expanded');
+        button.textContent = expanded ? '收起完整选集 ↑' : '更多选集';
+        button.setAttribute('aria-expanded', String(expanded));
+        button.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            clearFullscreenEpisodeCloseTimer();
+            fullscreenEpisodeKeepOpenUntil = Date.now() + 1400;
+
+            if (expanded) {
+                button.textContent = '正在收起…';
+                button.disabled = true;
+                saveFullscreenEpisodeExpandedPreference(false);
+                closeNativeEpisodeDrawer(true);
+                waitForFullscreenEpisodeExpandedState(false);
+            } else {
+                button.textContent = '正在加载…';
+                button.disabled = true;
+                saveFullscreenEpisodeExpandedPreference(true);
+                fullscreenEpisodeLoadRetries = 20;
+                const expandState = requestFullNewEpisodeList();
+                if (expandState === 'unavailable') {
+                    button.textContent = '更多选集';
+                    button.disabled = false;
+                    return;
+                }
+                waitForFullscreenEpisodeExpandedState(true);
+            }
+        });
+        footer.appendChild(button);
     }
 
     function ensureFullscreenEpisodePanel() {
@@ -1153,10 +1450,14 @@
             const body = document.createElement('div');
             body.className = 'mgtv-fullscreen-episode-body';
 
+            const footer = document.createElement('div');
+            footer.className = 'mgtv-fullscreen-episode-footer';
+
             head.appendChild(title);
             head.appendChild(closeButton);
             panel.appendChild(head);
             panel.appendChild(body);
+            panel.appendChild(footer);
 
             panel.addEventListener('mouseenter', clearFullscreenEpisodeCloseTimer);
             panel.addEventListener('mouseleave', () => scheduleFullscreenEpisodeClose());
@@ -1172,16 +1473,50 @@
     function syncFullscreenEpisodePanel() {
         const panel = ensureFullscreenEpisodePanel();
         const body = panel.querySelector('.mgtv-fullscreen-episode-body');
-        const sourceList = getPositiveVideoList();
+        const footer = panel.querySelector('.mgtv-fullscreen-episode-footer');
+        let sourceList = getPositiveVideoList();
 
         if (!body) return panel;
         body.textContent = '';
+        if (footer) {
+            footer.textContent = '';
+            footer.style.display = 'none';
+        }
 
-        const months = getFullscreenEpisodeMonths();
-        if (months.length > 1) {
+        if (sourceList && sourceList.matches('.mgtv-player-aside-video-selector')) {
+            const isExpanded = !!sourceList.closest('.mgtv-player-aside__drawer-wrap--active');
+            if (!isExpanded && fullscreenEpisodeExpandedPreference) {
+                const expandState = requestFullNewEpisodeList();
+                if (expandState !== 'unavailable') {
+                    const loading = document.createElement('div');
+                    loading.className = 'mgtv-fullscreen-episode-empty';
+                    loading.textContent = '正在恢复完整播放列表…';
+                    body.appendChild(loading);
+                    scheduleFullscreenEpisodeLoadRefresh();
+                    return panel;
+                }
+            }
+            if (isExpanded && !getEpisodeSourceItems(sourceList).length) {
+                const loading = document.createElement('div');
+                loading.className = 'mgtv-fullscreen-episode-empty';
+                loading.textContent = '正在加载完整播放列表…';
+                body.appendChild(loading);
+                scheduleFullscreenEpisodeLoadRefresh();
+                return panel;
+            }
+        }
+
+        clearFullscreenEpisodeLoadTimer();
+        fullscreenEpisodeLoadRetries = 0;
+
+        const filterGroups = getFullscreenEpisodeFilterGroups(sourceList);
+        filterGroups.forEach(tabs => {
+            if (tabs.length < 2) return;
+            const filterGroup = document.createElement('div');
+            filterGroup.className = 'mgtv-fullscreen-episode-filter-group';
             const monthList = document.createElement('div');
             monthList.className = 'mgtv-fullscreen-episode-months';
-            months.forEach(month => {
+            tabs.forEach(month => {
                 const monthButton = document.createElement('button');
                 monthButton.type = 'button';
                 monthButton.className = 'mgtv-fullscreen-episode-month';
@@ -1194,6 +1529,7 @@
                     if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
                     clearFullscreenEpisodeCloseTimer();
                     fullscreenEpisodeMonthSwitching = true;
+                    fullscreenEpisodeLoadRetries = 20;
                     fullscreenEpisodeKeepOpenUntil = Date.now() + 1200;
                     const monthSwitchToken = ++fullscreenEpisodeMonthSwitchToken;
                     monthList.querySelectorAll('.mgtv-fullscreen-episode-month-active')
@@ -1210,12 +1546,13 @@
                         }
                     };
                     setTimeout(() => refreshMonthList(false), 160);
-                    setTimeout(() => refreshMonthList(true), 560);
+                    setTimeout(() => refreshMonthList(true), 900);
                 });
                 monthList.appendChild(monthButton);
             });
-            body.appendChild(monthList);
-        }
+            filterGroup.appendChild(monthList);
+            body.appendChild(filterGroup);
+        });
 
         if (!sourceList) {
             const empty = document.createElement('div');
@@ -1230,18 +1567,19 @@
         list.className = 'mgtv-fullscreen-episode-list';
         const episodeEntries = [];
 
-        Array.from(sourceList.querySelectorAll('li[data-vid]')).forEach(sourceItem => {
-            const link = sourceItem.querySelector('a');
-            const vid = sourceItem.getAttribute('data-vid');
-            const text = getCleanEpisodeText(sourceItem, link);
-            if (!vid || !link || !text) return;
+        getEpisodeSourceItems(sourceList).forEach((sourceItem, index) => {
+            const sourceAction = getEpisodeSourceAction(sourceItem);
+            const active = isCurrentEpisodeSourceItem(sourceItem);
+            const vid = sourceItem.getAttribute('data-vid') || (active ? currentId : `card-${index}`);
+            const text = getCleanEpisodeText(sourceItem, sourceAction);
+            if (!sourceAction || !text) return;
             const fullText = (sourceItem.textContent || '').trim();
             const dateMatch = (fullText.match(/(\d{4})-(\d{2})-(\d{2})/) || text.match(/(\d{4})-(\d{2})-(\d{2})/));
             const group = dateMatch ? `${dateMatch[2]}月` : '';
             const displayText = dateMatch && !text.includes(dateMatch[0])
                 ? `${dateMatch[0]} ${text}`
                 : text;
-            episodeEntries.push({ sourceItem, link, vid, text: displayText, group });
+            episodeEntries.push({ sourceItem, sourceAction, vid, text: displayText, group, active });
         });
 
         const maxTitleLength = episodeEntries.reduce((max, entry) => Math.max(max, entry.text.length), 0);
@@ -1253,19 +1591,21 @@
             list.classList.add('mgtv-fullscreen-episode-list-long');
         }
 
-        episodeEntries.forEach(({ sourceItem, link, vid, text }) => {
+        episodeEntries.forEach(({ sourceItem, sourceAction, vid, text, active }) => {
             const item = document.createElement('li');
             item.className = 'mgtv-fullscreen-episode-item';
             item.setAttribute('data-vid', vid);
-            if (vid === currentId || sourceItem.classList.contains('playing') || sourceItem.classList.contains('focus')) {
+            if (vid === currentId || active) {
                 item.classList.add('mgtv-fullscreen-episode-current');
             }
 
-            const itemLink = document.createElement('a');
+            const itemLink = document.createElement(sourceAction.tagName === 'A' ? 'a' : 'button');
+            if (itemLink.tagName === 'BUTTON') itemLink.type = 'button';
             itemLink.className = 'mgtv-fullscreen-episode-link';
-            itemLink.href = link.href;
+            if (itemLink.tagName === 'A') itemLink.href = sourceAction.href;
             itemLink.textContent = text;
             itemLink.title = text;
+            itemLink._mgtvSourceEpisode = sourceAction;
 
             item.appendChild(itemLink);
             list.appendChild(item);
@@ -1280,8 +1620,9 @@
         }
 
         body.appendChild(list);
+        appendFullscreenEpisodeMoreButton(footer, sourceList);
 
-        panel._mgtvCurrentEpisodeItem = currentId ? list.querySelector(`li[data-vid="${currentId}"]`) : list.querySelector('.mgtv-fullscreen-episode-current');
+        panel._mgtvCurrentEpisodeItem = list.querySelector('.mgtv-fullscreen-episode-current');
 
         return panel;
     }
@@ -1291,6 +1632,26 @@
             clearTimeout(fullscreenEpisodeCloseTimer);
             fullscreenEpisodeCloseTimer = null;
         }
+    }
+
+    function clearFullscreenEpisodeLoadTimer() {
+        if (fullscreenEpisodeLoadTimer) {
+            clearTimeout(fullscreenEpisodeLoadTimer);
+            fullscreenEpisodeLoadTimer = null;
+        }
+    }
+
+    function scheduleFullscreenEpisodeLoadRefresh() {
+        clearFullscreenEpisodeLoadTimer();
+        if (fullscreenEpisodeLoadRetries <= 0) return;
+        fullscreenEpisodeLoadRetries -= 1;
+        fullscreenEpisodeLoadTimer = setTimeout(() => {
+            fullscreenEpisodeLoadTimer = null;
+            const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+            if (!panel || !panel.classList.contains('mgtv-fullscreen-episode-open')) return;
+            syncFullscreenEpisodePanel();
+            requestAnimationFrame(scrollFullscreenEpisodeCurrentIntoView);
+        }, 250);
     }
 
     function scheduleFullscreenEpisodeClose(delay = 360) {
@@ -1663,6 +2024,22 @@
         body.scrollTop = Math.max(0, targetTop);
     }
 
+    function positionFullscreenEpisodePanel() {
+        const panel = document.getElementById('mgtv_fullscreen_episode_panel');
+        const button = document.getElementById('mgtv_fullscreen_episode_btn');
+        if (!panel || !button || !panel.classList.contains('mgtv-fullscreen-episode-open')) return;
+
+        const buttonRect = button.getBoundingClientRect();
+        const panelWidth = panel.offsetWidth || Math.min(380, window.innerWidth - 48);
+        if (!buttonRect.width || !panelWidth) return;
+
+        const buttonCenter = buttonRect.left + buttonRect.width / 2;
+        const left = Math.max(12, Math.min(window.innerWidth - panelWidth - 12, buttonCenter - panelWidth / 2));
+        const bottom = Math.max(56, window.innerHeight - buttonRect.top + 20);
+        panel.style.setProperty('left', `${left}px`, 'important');
+        panel.style.setProperty('bottom', `${bottom}px`, 'important');
+    }
+
     function toggleFullscreenEpisodePanel(forceOpen) {
         const button = document.getElementById('mgtv_fullscreen_episode_btn');
         let panel = document.getElementById('mgtv_fullscreen_episode_panel');
@@ -1671,6 +2048,7 @@
             : !(panel && panel.classList.contains('mgtv-fullscreen-episode-open'));
 
         if (willOpen) {
+            fullscreenEpisodeLoadRetries = 20;
             panel = syncFullscreenEpisodePanel();
         } else {
             panel = panel || ensureFullscreenEpisodePanel();
@@ -1679,12 +2057,28 @@
         panel.classList.toggle('mgtv-fullscreen-episode-open', willOpen);
         if (button) button.classList.toggle('mgtv-fullscreen-episode-active', willOpen);
         if (willOpen) {
-            requestAnimationFrame(scrollFullscreenEpisodeCurrentIntoView);
-            setTimeout(scrollFullscreenEpisodeCurrentIntoView, 120);
+            requestAnimationFrame(() => {
+                positionFullscreenEpisodePanel();
+                scrollFullscreenEpisodeCurrentIntoView();
+            });
+            setTimeout(() => {
+                positionFullscreenEpisodePanel();
+                scrollFullscreenEpisodeCurrentIntoView();
+            }, 120);
         }
         if (!willOpen) {
             fullscreenEpisodeMonthSwitching = false;
             clearFullscreenEpisodeCloseTimer();
+            clearFullscreenEpisodeLoadTimer();
+            fullscreenEpisodeLoadRetries = 0;
+            if (!fullscreenEpisodeSelectionInProgress) {
+                cleanupScriptOpenedNativeEpisodeDrawer();
+                setTimeout(() => cleanupScriptOpenedNativeEpisodeDrawer(), 220);
+                setTimeout(() => cleanupScriptOpenedNativeEpisodeDrawer(), 600);
+                setTimeout(() => {
+                    cleanupScriptOpenedNativeEpisodeDrawer(true);
+                }, 1200);
+            }
         }
     }
 
@@ -1693,15 +2087,15 @@
         if (!panel || !panel.contains(e.target)) return;
 
         const clonedItem = e.target.closest('li[data-vid]');
-        const clonedLink = e.target.closest('a');
+        const clonedLink = e.target.closest('.mgtv-fullscreen-episode-link');
         if (!clonedItem && !clonedLink) return;
 
         const vid = clonedItem ? clonedItem.getAttribute('data-vid') : null;
         const href = clonedLink ? clonedLink.href : null;
         const sourceList = getPositiveVideoList();
-        let sourceLink = null;
+        let sourceLink = clonedLink && clonedLink._mgtvSourceEpisode;
 
-        if (sourceList && vid) {
+        if (!sourceLink && sourceList && vid) {
             sourceLink = sourceList.querySelector(`li[data-vid="${vid}"] a`);
         }
         if (!sourceLink && sourceList && href) {
@@ -1715,9 +2109,18 @@
 
         const wasNativeFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
         const wasFullscreen = isAnyFullscreen();
+        fullscreenEpisodeSelectionInProgress = true;
         toggleFullscreenEpisodePanel(false);
         releaseFullscreenEpisodeFocus();
         sourceLink.click();
+        setTimeout(() => {
+            fullscreenEpisodeSelectionInProgress = false;
+            cleanupScriptOpenedNativeEpisodeDrawer();
+        }, 300);
+        setTimeout(() => cleanupScriptOpenedNativeEpisodeDrawer(), 800);
+        setTimeout(() => {
+            cleanupScriptOpenedNativeEpisodeDrawer(true);
+        }, 1200);
         setTimeout(releaseFullscreenEpisodeFocus, 0);
         setTimeout(releaseFullscreenEpisodeFocus, 300);
         refocusFullscreenAfterEpisodeSwitch(wasFullscreen, wasNativeFullscreen);
@@ -1792,12 +2195,16 @@
 
         button.style.display = shouldShow ? 'flex' : 'none';
         if (!shouldShow) toggleFullscreenEpisodePanel(false);
-        if (shouldShow) ensureFullscreenEpisodePanel();
+        if (shouldShow) {
+            ensureFullscreenEpisodePanel();
+            positionFullscreenEpisodePanel();
+        }
     }
 
     function getVideoListFirstVid(videoList) {
-        const firstItem = videoList ? videoList.querySelector('li[data-vid]') : null;
-        return firstItem ? firstItem.getAttribute('data-vid') : null;
+        const firstItem = getEpisodeSourceItems(videoList)[0] || null;
+        if (!firstItem) return null;
+        return firstItem.getAttribute('data-vid') || getCleanEpisodeText(firstItem, getEpisodeSourceAction(firstItem));
     }
 
     function handleCrossMonthPlay(video, currentVideoId) {
@@ -2292,25 +2699,33 @@
             btn.id = btnId;
             btn.style.position = 'fixed';
             btn.style.bottom = '9px';
-            btn.style.right = '58px';
+            btn.style.right = '56px';
             btn.style.zIndex = '9999';
-            btn.style.width = '32px';
-            btn.style.height = '32px';
-            btn.style.backgroundColor = '#fff';
-            btn.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.2)';
+            btn.style.width = '40px';
+            btn.style.height = '40px';
+            btn.style.boxSizing = 'border-box';
+            btn.style.backgroundColor = 'rgba(0, 0, 0, 0.18)';
+            btn.style.border = '1px solid rgba(255, 255, 255, 0.18)';
+            btn.style.boxShadow = 'none';
             btn.style.cursor = 'pointer';
             btn.style.display = 'flex';
             btn.style.alignItems = 'center';
             btn.style.justifyContent = 'center';
             btn.style.borderRadius = '50%';
-            btn.style.transition = 'transform 0.2s';
+            btn.style.transition = 'border-color 0.2s, background-color 0.2s';
 
             // Shield Icon SVG
-            btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24"><path d="M15.273 19.469c-.662-.662-1.582-1.002-2.514-.931-1.767.137-3.58-.47-4.931-1.821-1.223-1.224-1.83-2.824-1.83-4.426 0-.604.086-1.208.258-1.792l3.771 3.771c1.912.417 4.652-2.353 4.242-4.242l-3.769-3.771c.583-.171 1.187-.257 1.790-.257 1.603 0 3.202.606 4.428 1.83 1.35 1.351 1.957 3.164 1.82 4.93-.072.933.268 1.853.93 2.514l2.843 2.843c1.066-1.793 1.689-3.88 1.689-6.117 0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12c2.236 0 4.323-.623 6.115-1.688l-2.842-2.843z"/></svg>`;
+            btn.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="rgba(255,255,255,0.76)"><path d="M15.273 19.469c-.662-.662-1.582-1.002-2.514-.931-1.767.137-3.58-.47-4.931-1.821-1.223-1.224-1.83-2.824-1.83-4.426 0-.604.086-1.208.258-1.792l3.771 3.771c1.912.417 4.652-2.353 4.242-4.242l-3.769-3.771c.583-.171 1.187-.257 1.790-.257 1.603 0 3.202.606 4.428 1.83 1.35 1.351 1.957 3.164 1.82 4.93-.072.933.268 1.853.93 2.514l2.843 2.843c1.066-1.793 1.689-3.88 1.689-6.117 0-6.627-5.373-12-12-12s-12 5.373-12 12 5.373 12 12 12c2.236 0 4.323-.623 6.115-1.688l-2.842-2.843z"/></svg>`;
 
             btn.addEventListener('click', () => this.openModal());
-            btn.addEventListener('mouseenter', () => btn.style.transform = 'scale(1.1)');
-            btn.addEventListener('mouseleave', () => btn.style.transform = 'scale(1)');
+            btn.addEventListener('mouseenter', () => {
+                btn.style.backgroundColor = 'rgba(255, 95, 0, 0.22)';
+                btn.style.borderColor = 'rgba(255, 95, 0, 0.8)';
+            });
+            btn.addEventListener('mouseleave', () => {
+                btn.style.backgroundColor = 'rgba(0, 0, 0, 0.18)';
+                btn.style.borderColor = 'rgba(255, 255, 255, 0.18)';
+            });
 
             document.body.appendChild(btn);
 
@@ -2325,59 +2740,63 @@
             modal.id = 'mgtv_blocklist_modal';
             modal.style.cssText = `
                 position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-                background: rgba(0,0,0,0.6); z-index: 2147483647;
+                background: rgba(0,0,0,0.72); z-index: 2147483647;
                 display: none; align-items: center; justify-content: center;
-                backdrop-filter: blur(2px);
+                backdrop-filter: blur(8px);
             `;
 
             const content = document.createElement('div');
             // 样式参考：简洁，圆角，阴影
             content.style.cssText = `
-                background: #fff; width: 480px; max-width: 90%; 
-                border-radius: 12px; padding: 24px; 
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+                background: rgba(11, 12, 20, 0.97); width: 520px; max-width: 90%;
+                border: 1px solid rgba(255,255,255,0.12);
+                border-radius: 10px; padding: 24px;
+                box-shadow: 0 18px 60px rgba(0,0,0,0.58);
+                backdrop-filter: blur(12px);
                 font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-                color: #333;
+                color: rgba(255,255,255,0.92);
+                color-scheme: dark;
                 position: relative;
                 max-height: 90vh;
                 overflow: auto;
+                scrollbar-color: rgba(255,255,255,0.28) transparent;
             `;
 
             // 芒果TV风格按钮样式
-            const btnStyle = `padding: 6px 16px; border-radius: 4px; cursor: pointer; font-size: 14px; border: none; outline: none; transition: all 0.2s;`;
-            const primaryBtnStyle = `${btnStyle} background: #FF5F00; color: #fff;`;
-            const secondaryBtnStyle = `${btnStyle} background: transparent; color: #666; margin-right: 8px;`;
+            const btnStyle = `padding: 7px 16px; border-radius: 6px; cursor: pointer; font-size: 14px; outline: none; transition: all 0.2s;`;
+            const primaryBtnStyle = `${btnStyle} background: #FF5F00; color: #fff; border: 1px solid #FF5F00;`;
+            const secondaryBtnStyle = `${btnStyle} background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.72); border: 1px solid rgba(255,255,255,0.1); margin-right: 8px;`;
 
             content.innerHTML = `
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                     <h3 style="margin:0; font-size:18px; font-weight:600;">弹幕增强设置</h3>
-                    <div id="mgtv_modal_close" style="cursor:pointer; font-size:20px; color:#999;">×</div>
+                    <div id="mgtv_modal_close" style="cursor:pointer; font-size:22px; color:rgba(255,255,255,0.55);">×</div>
                 </div>
                 
-                <p style="font-size:13px; color:#666; margin-bottom:12px; line-height:1.5;">
-                    每行一个屏蔽词。支持文本及正则表达式（如 <code style="background:#f5f5f5;padding:2px 4px;border-radius:4px;">/^haha\\d+$/i</code>）。
+                <p style="font-size:13px; color:rgba(255,255,255,0.58); margin-bottom:12px; line-height:1.5;">
+                    每行一个屏蔽词。支持文本及正则表达式（如 <code style="background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.82);padding:2px 4px;border-radius:4px;">/^haha\\d+$/i</code>）。
                 </p>
                 
-                <textarea id="mgtv_blocklist_input" style="width:100%; height:200px; margin-bottom:16px; padding:12px; border:1px solid #ddd; border-radius:8px; font-family:monospace; font-size:14px; resize:vertical; box-sizing:border-box; outline:none;"></textarea>
+                <textarea id="mgtv_blocklist_input" style="width:100%; height:200px; margin-bottom:16px; padding:12px; border:1px solid rgba(255,255,255,0.12); border-radius:8px; background:rgba(255,255,255,0.055); color:rgba(255,255,255,0.9); caret-color:#FF5F00; font-family:monospace; font-size:14px; resize:vertical; box-sizing:border-box; outline:none;"></textarea>
 
-                <div style="border:1px solid #eee; border-radius:8px; padding:12px; margin-bottom:16px; background:#fafafa;">
+                <div style="border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:12px; margin-bottom:16px; background:rgba(255,255,255,0.035);">
                     <div style="font-size:14px; font-weight:600; margin-bottom:10px;">弹幕合并</div>
                     <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
-                        <input type="checkbox" id="mgtv_merge_enabled"> 启用相似弹幕合并
+                        <input type="checkbox" id="mgtv_merge_enabled" style="accent-color:#FF5F00;"> 启用相似弹幕合并
                     </label>
                     <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
                         时间阈值
-                        <input type="number" id="mgtv_merge_window" min="1" max="60" step="1" style="width:64px; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                        <input type="number" id="mgtv_merge_window" min="1" max="60" step="1" style="width:64px; padding:4px 6px; border:1px solid rgba(255,255,255,0.14); border-radius:4px; background:rgba(255,255,255,0.07); color:#fff;">
                         秒内的相似弹幕合并
                     </label>
                     <label style="display:flex; align-items:center; gap:8px; font-size:13px; margin-bottom:8px;">
-                        <input type="checkbox" id="mgtv_merge_show_count"> 显示弹幕数量标记
+                        <input type="checkbox" id="mgtv_merge_show_count" style="accent-color:#FF5F00;"> 显示弹幕数量标记
                         <span>仅当数量大于</span>
-                        <input type="number" id="mgtv_merge_min_count" min="1" max="99" step="1" style="width:56px; padding:4px 6px; border:1px solid #ddd; border-radius:4px;">
+                        <input type="number" id="mgtv_merge_min_count" min="1" max="99" step="1" style="width:56px; padding:4px 6px; border:1px solid rgba(255,255,255,0.14); border-radius:4px; background:rgba(255,255,255,0.07); color:#fff;">
                         <span>时显示</span>
                     </label>
                     <label style="display:flex; align-items:center; gap:8px; font-size:13px;">
-                        <input type="checkbox" id="mgtv_merge_enlarge"> 合并后增大字号，超过 5 条后逐级变大
+                        <input type="checkbox" id="mgtv_merge_enlarge" style="accent-color:#FF5F00;"> 合并后增大字号，超过 5 条后逐级变大
                     </label>
                 </div>
                 
@@ -2417,9 +2836,9 @@
             };
 
             addBtnHover(content.querySelector('#mgtv_btn_save'), '#E55500', '#FF5F00');
-            addBtnHover(content.querySelector('#mgtv_btn_cancel'), '#f0f0f0');
-            addBtnHover(importBtn, '#f0f0f0');
-            addBtnHover(exportBtn, '#f0f0f0');
+            addBtnHover(content.querySelector('#mgtv_btn_cancel'), 'rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)');
+            addBtnHover(importBtn, 'rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)');
+            addBtnHover(exportBtn, 'rgba(255,255,255,0.12)', 'rgba(255,255,255,0.06)');
 
             // 为导入/导出按钮添加自定义 Tooltip
             addTooltip(importBtn, '💡 导入后新增合并当前已有的屏蔽词', 'top');
@@ -2428,7 +2847,7 @@
             // 简单的Textarea focus样式
             const ta = document.getElementById('mgtv_blocklist_input');
             ta.addEventListener('focus', () => ta.style.borderColor = '#FF5F00');
-            ta.addEventListener('blur', () => ta.style.borderColor = '#ddd');
+            ta.addEventListener('blur', () => ta.style.borderColor = 'rgba(255,255,255,0.12)');
         }
 
         openModal() {
