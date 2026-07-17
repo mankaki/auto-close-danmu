@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.5.46
+// @version      2.5.47
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、Tab 记忆、跨月自动连播、全屏选集与全屏下 ESC 输入保护
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -1012,7 +1012,7 @@
     let playlistLocateTimer = null;
     let playlistLocateTargetVideoId = null;
     let playlistLocateDoneVideoId = null;
-    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.46';
+    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.47';
     const FULLSCREEN_EPISODE_EXPANDED_KEY = 'mgtv_fullscreen_episode_expanded';
     function loadFullscreenEpisodeExpandedPreference() {
         try {
@@ -1253,6 +1253,21 @@
             return { speedControl: null, parent: rightList, beforeNode };
         }
         return { speedControl: null, parent: getPlayerRoot() };
+    }
+
+    function findNativeFullscreenEpisodeControl(mount, scriptButton) {
+        if (!mount || !mount.parent) return null;
+
+        return Array.from(mount.parent.querySelectorAll('button, [role="button"], div, span, p'))
+            .find(node => {
+                if (node === scriptButton ||
+                    (scriptButton && (node.contains(scriptButton) || scriptButton.contains(node))) ||
+                    node.closest('#mgtv_fullscreen_episode_panel')) return false;
+                if ((node.textContent || '').trim() !== '选集') return false;
+
+                const rect = node.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            }) || null;
     }
 
     function stripDuplicateIds(root) {
@@ -2140,12 +2155,17 @@
     }, true);
 
     function ensureFullscreenEpisodeButton() {
-        const shouldShow = isAnyFullscreen();
-        let button = document.getElementById('mgtv_fullscreen_episode_btn');
-        if (button && button.dataset.mgtvEpisodeVersion !== FULLSCREEN_EPISODE_UI_VERSION) {
-            button.remove();
-            button = null;
-        }
+        // 播放器重建控制栏时可能会把已注入的 DOM 一起克隆，从而留下多个同 ID 按钮。
+        // 克隆节点不会携带 expando 属性和事件监听，所以只保留当前脚本初始化过的那一个。
+        const buttonCandidates = Array.from(document.querySelectorAll('[id="mgtv_fullscreen_episode_btn"]'));
+        let button = buttonCandidates.find(node =>
+            node._mgtvEpisodeInitialized === true &&
+            node.dataset.mgtvEpisodeVersion === FULLSCREEN_EPISODE_UI_VERSION
+        ) || null;
+        buttonCandidates.forEach(node => {
+            if (node !== button) node.remove();
+        });
+
         const mount = getFullscreenEpisodeMount();
         const stateSignature = getFullscreenEpisodeStateSignature();
         const panel = document.getElementById('mgtv_fullscreen_episode_panel');
@@ -2161,6 +2181,7 @@
             button = document.createElement('div');
             button.id = 'mgtv_fullscreen_episode_btn';
             button.dataset.mgtvEpisodeVersion = FULLSCREEN_EPISODE_UI_VERSION;
+            button._mgtvEpisodeInitialized = true;
             button.textContent = '选集';
             button.setAttribute('role', 'button');
             button.setAttribute('tabindex', '0');
@@ -2193,6 +2214,9 @@
             mount.parent.appendChild(button);
         }
 
+        // 新版播放器有时会在数据加载后自行补上“选集”；此时优先使用原生入口。
+        const hasNativeEpisodeControl = !!findNativeFullscreenEpisodeControl(mount, button);
+        const shouldShow = isAnyFullscreen() && !hasNativeEpisodeControl;
         button.style.display = shouldShow ? 'flex' : 'none';
         if (!shouldShow) toggleFullscreenEpisodePanel(false);
         if (shouldShow) {
