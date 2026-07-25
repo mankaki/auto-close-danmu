@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.5.49
-// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、预告播完暂停、跨年自动连播、全屏选集与全屏下 ESC 输入保护
+// @version      2.5.50
+// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、片尾推荐拦截、跨年份/季度自动连播、全屏选集与全屏下 ESC 输入保护
 // @author       mankaki
 // @match        *://www.mgtv.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
@@ -789,9 +789,11 @@
     let endedListenerAttached = false;
     let isLastInMonth = false; // 标记当前是否为本月最后一集
     let previewStopArmedVideoId = null;
+    let finalEpisodeStopArmedVideoId = null;
 
-    function resetPreviewStopState() {
+    function resetPlaybackStopState() {
         previewStopArmedVideoId = null;
+        finalEpisodeStopArmedVideoId = null;
     }
 
     function getEpisodeTypeTag(item) {
@@ -814,12 +816,54 @@
         return getEpisodeTypeTag(currentItem) === '预告';
     }
 
-    function stopPreviewAtEnd(video, event) {
+    function isIncompleteCollapsedEpisodeList(videoList) {
+        return !!videoList &&
+            videoList.matches('.mgtv-player-aside-video-selector') &&
+            !videoList.closest('.mgtv-player-aside__drawer-wrap') &&
+            !!videoList.querySelector('.mgtv-player-aside-video-selector__overflow-btn');
+    }
+
+    function isFollowedByRecommendation(videoList, currentItem) {
+        if (!videoList || !currentItem) return false;
+        const cards = Array.from(videoList.querySelectorAll('.mgtv-player-aside-image-selector__card'));
+        const currentIndex = cards.indexOf(currentItem);
+        if (currentIndex < 0) return false;
+
+        const nextCard = cards[currentIndex + 1] || null;
+        return getEpisodeTypeTag(nextCard) === '推荐';
+    }
+
+    function isCurrentVideoFinalEpisode(videoId) {
+        if (!isPositiveTabActive()) return false;
+
+        const videoList = getPositiveVideoList();
+        const items = getEpisodeSourceItems(videoList);
+        const currentItem = items.find(item => item.getAttribute('data-vid') === videoId) ||
+            items.find(isCurrentEpisodeSourceItem) || null;
+        if (!currentItem || items.indexOf(currentItem) !== items.length - 1) return false;
+
+        // 折叠列表只包含部分选集，不能仅凭“最后一个可见项”认定节目已播完。
+        // 仅当站方明确把推荐卡放在当前项后面时，才确认下一步会离开当前节目。
+        if (isIncompleteCollapsedEpisodeList(videoList) &&
+            !isFollowedByRecommendation(videoList, currentItem)) {
+            return false;
+        }
+
+        const groups = getMonthTabs();
+        const currentGroup = getFocusedMonth();
+        if (!groups.length || !currentGroup) return true;
+        return groups.indexOf(currentGroup) === 0;
+    }
+
+    function stopAutoplayAtEnd(video, event) {
         if (!video || video.tagName !== 'VIDEO') return false;
         const currentVideoId = getMgtvVideoId(window.location.href);
-        if (previewStopArmedVideoId !== currentVideoId && !isCurrentVideoPreview(currentVideoId)) return false;
+        const shouldStop = previewStopArmedVideoId === currentVideoId ||
+            finalEpisodeStopArmedVideoId === currentVideoId ||
+            isCurrentVideoPreview(currentVideoId) ||
+            isCurrentVideoFinalEpisode(currentVideoId);
+        if (!shouldStop) return false;
 
-        previewStopArmedVideoId = currentVideoId;
         video.pause();
         if (event) {
             event.preventDefault();
@@ -847,9 +891,13 @@
             if (previewStopArmedVideoId !== currentVideoId && isCurrentVideoPreview(currentVideoId)) {
                 previewStopArmedVideoId = currentVideoId;
             }
-            if (previewStopArmedVideoId === currentVideoId) {
+            if (remaining <= 5 && finalEpisodeStopArmedVideoId !== currentVideoId &&
+                isCurrentVideoFinalEpisode(currentVideoId)) {
+                finalEpisodeStopArmedVideoId = currentVideoId;
+            }
+            if (previewStopArmedVideoId === currentVideoId || finalEpisodeStopArmedVideoId === currentVideoId) {
                 if (remaining <= 0.35 && remaining >= 0) {
-                    // 不提前暂停，确保预告完整播放；仅阻止站方在片尾通过 timeupdate 接管跳转。
+                    // 不提前暂停，确保内容完整播放；仅阻止站方在片尾通过 timeupdate 接管跳转。
                     e.stopImmediatePropagation();
                     return;
                 }
@@ -908,7 +956,7 @@
 
         // timeupdate 的触发频率由浏览器决定；ended 再做一道兜底，并阻止站方的自动推荐处理。
         document.addEventListener('ended', (e) => {
-            if (e.target.tagName === 'VIDEO') stopPreviewAtEnd(e.target, e);
+            if (e.target.tagName === 'VIDEO') stopAutoplayAtEnd(e.target, e);
         }, true);
 
         endedListenerAttached = true;
@@ -918,11 +966,19 @@
         const focusTab = document.querySelector('.show-tabs .tab.focus a');
         if (focusTab) return focusTab.textContent.trim() === '往期正片';
 
-        // 新版侧栏把内容类型和年份都做成 overflow tabs，需单独确认“正片”类型处于激活状态。
-        const activeTabs = Array.from(document.querySelectorAll(
-            '.mgtv-player-aside-video-selector .mgtv-player-aside-overflow-tabs__item--active'
-        ));
-        return activeTabs.some(tab => (tab.textContent || '').trim() === '正片');
+        const allTabs = Array.from(document.querySelectorAll(
+            '.mgtv-player-aside-video-selector .mgtv-player-aside-overflow-tabs__item'
+        )).filter(tab => !tab.closest('[aria-hidden="true"]'));
+        const activeTabs = allTabs.filter(tab =>
+            tab.classList.contains('mgtv-player-aside-overflow-tabs__item--active')
+        );
+
+        // 有内容类型 Tab 时仍以“正片”为准；只有年份/季度 Tab 时，它本身就是正片分组。
+        const hasPositiveTypeTab = allTabs.some(tab => (tab.textContent || '').trim() === '正片');
+        if (hasPositiveTypeTab) {
+            return activeTabs.some(tab => (tab.textContent || '').trim() === '正片');
+        }
+        return activeTabs.some(tab => /^(?:\d{4}年|第\d+季)$/.test((tab.textContent || '').trim()));
     }
 
     function checkIfLastInMonth() {
@@ -990,12 +1046,12 @@
         const legacyTabs = Array.from(document.querySelectorAll('.time-select .month.scroll-item'));
         if (legacyTabs.length) return legacyTabs;
 
-        // 2026 新版右侧选集面板：年份/类型都由 overflow tabs 控制，必须排除“正片/直拍/宿舍”等类型 Tab。
+        // 新版右侧选集面板可能按年份或季度分组，必须排除“正片/直拍/宿舍”等内容类型 Tab。
         return Array.from(document.querySelectorAll(
             '.mgtv-player-aside-video-selector .mgtv-player-aside-overflow-tabs__items > .mgtv-player-aside-overflow-tabs__item'
         )).filter(tab =>
             !tab.closest('[aria-hidden="true"]') &&
-            /^\d{4}年$/.test((tab.textContent || '').trim())
+            /^(?:\d{4}年|第\d+季)$/.test((tab.textContent || '').trim())
         );
     }
 
@@ -1086,7 +1142,7 @@
     let playlistLocateTimer = null;
     let playlistLocateTargetVideoId = null;
     let playlistLocateDoneVideoId = null;
-    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.49';
+    const FULLSCREEN_EPISODE_UI_VERSION = '2.5.50';
     const FULLSCREEN_EPISODE_EXPANDED_KEY = 'mgtv_fullscreen_episode_expanded';
     function loadFullscreenEpisodeExpandedPreference() {
         try {
@@ -2366,7 +2422,9 @@
             const nextMonthIndex = currentMonthIndex - 1;
 
             if (nextMonthIndex < 0) {
-                crossMonthBlockAutoplayVideoId = currentVideoId;
+                if (isCurrentVideoFinalEpisode(currentVideoId)) {
+                    finalEpisodeStopArmedVideoId = currentVideoId;
+                }
                 finishCrossMonthSwitch();
                 return;
             }
@@ -3172,7 +3230,7 @@
             crossMonthFailedVideoId = null;
             crossMonthBlockAutoplayVideoId = null;
             resetCrossMonthReadyState();
-            resetPreviewStopState();
+            resetPlaybackStopState();
             init();
         }
         // 持续尝试恢复 Tab（DOM 可能延迟加载）
@@ -3225,7 +3283,7 @@
             crossMonthFailedVideoId = null;
             crossMonthBlockAutoplayVideoId = null;
             resetCrossMonthReadyState();
-            resetPreviewStopState();
+            resetPlaybackStopState();
             init();
         }
     };
@@ -3246,7 +3304,7 @@
                 crossMonthFailedVideoId = null;
                 crossMonthBlockAutoplayVideoId = null;
                 resetCrossMonthReadyState();
-                resetPreviewStopState();
+                resetPlaybackStopState();
                 init();
             }
         });
