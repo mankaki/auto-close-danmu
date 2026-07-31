@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.5.50
+// @version      2.5.51
 // @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、片尾推荐拦截、跨年份/季度自动连播、全屏选集与全屏下 ESC 输入保护
 // @author       mankaki
 // @match        *://www.mgtv.com/*
@@ -226,34 +226,67 @@
     }
 
     function toggleFullscreen() {
-        // 尝试寻找全屏按钮点击（以同步UI状态）
-        const fsBtn = document.querySelector('[title="全屏"]') ||
-            document.querySelector('[title="退出全屏"]') ||
-            document.querySelector('mango-icon[name="fullscreen"]'); // 猜测的选择器
+        const findVisible = (nodes) => nodes.find(node => {
+            const rect = node.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        });
 
-        if (fsBtn) {
-            fsBtn.click();
-            console.log("切换全屏 (点击按钮)");
-            return;
+        // 2026 新版播放器：F 和鼠标必须点击同一个站点控件，保持内部状态同步。
+        const modernButtons = Array.from(document.querySelectorAll('.fullscreenBtn'));
+        const fullscreenButton = findVisible(modernButtons) || modernButtons[0];
+
+        if (fullscreenButton) {
+            const clickTarget = fullscreenButton.querySelector('.icon-zoom, svg, i') || fullscreenButton;
+            clickTarget.click();
+            console.log('[mgtv-danmu] F 切换全屏：已点击播放器全屏控件');
+            return true;
         }
 
-        // 兜底：使用原生 API
-        const player = document.querySelector('.mango-player') || document.body;
-        if (!document.fullscreenElement) {
+        // 兼容旧版播放器，包括已被脚本改成“全屏 (F)”的 title。
+        const legacyCandidates = Array.from(document.querySelectorAll(
+            '[title="全屏"], [title="全屏 (F)"], [title="退出全屏"], mango-icon[name="fullscreen"]'
+        ));
+        const legacyButton = findVisible(legacyCandidates) || legacyCandidates[0];
+        if (legacyButton) {
+            legacyButton.click();
+            console.log('[mgtv-danmu] F 切换全屏：已点击旧版全屏控件');
+            return true;
+        }
+
+        // 仅当页面完全没有站内全屏控件时才使用原生 API。
+        const player = getPlayerRoot();
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
             if (player.requestFullscreen) {
-                player.requestFullscreen();
-            } else if (player.webkitRequestFullscreen) {
-                player.webkitRequestFullscreen();
+                try {
+                    const request = player.requestFullscreen();
+                    if (request && typeof request.catch === 'function') request.catch(() => {});
+                } catch (e) {
+                    return false;
+                }
+                return true;
             }
-            console.log("切换全屏 (原生API)");
+            if (player.webkitRequestFullscreen) {
+                try { player.webkitRequestFullscreen(); } catch (e) { return false; }
+                return true;
+            }
         } else {
             if (document.exitFullscreen) {
-                document.exitFullscreen();
-            } else if (document.webkitExitFullscreen) {
-                document.webkitExitFullscreen();
+                try {
+                    const exit = document.exitFullscreen();
+                    if (exit && typeof exit.catch === 'function') exit.catch(() => {});
+                } catch (e) {
+                    return false;
+                }
+                return true;
             }
-            console.log("退出全屏 (原生API)");
+            if (document.webkitExitFullscreen) {
+                try { document.webkitExitFullscreen(); } catch (e) { return false; }
+                return true;
+            }
         }
+
+        console.warn('[mgtv-danmu] F 切换全屏：未找到可用的全屏控件');
+        return false;
     }
 
     // 全屏下锁定 ESC,避免输入弹幕时按 ESC 退出全屏
@@ -357,7 +390,14 @@
     window.addEventListener('keyup', escInterceptor, true);
 
     window.addEventListener('keydown', (e) => {
-        if (e.key === 'f' || e.key === 'F' || e.key === 'Escape') {
+        if (e.code === 'KeyF' || e.key === 'f' || e.key === 'F') {
+            cancelFullscreenEpisodeRefocus();
+            if (!e.repeat && !isTyping()) {
+                toggleFullscreen();
+            }
+            return;
+        }
+        if (e.key === 'Escape') {
             cancelFullscreenEpisodeRefocus();
             return;
         }
@@ -422,8 +462,6 @@
 
         if (e.key === 'd' || e.key === 'D') {
             toggleDanmu();
-        } else if (e.key === 'f' || e.key === 'F') {
-            toggleFullscreen();
         }
     });
 
