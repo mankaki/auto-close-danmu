@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         芒果TV网页版弹幕增强
 // @namespace    http://tampermonkey.net/
-// @version      2.5.51
-// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、片尾推荐拦截、跨年份/季度自动连播、全屏选集与全屏下 ESC 输入保护
+// @version      2.5.52
+// @description  芒果TV弹幕增强脚本：自动关闭弹幕、快捷键操作、高级屏蔽词、视频列表换行、片尾推荐拦截、跨年份/季度自动连播与全屏下 ESC 输入保护
 // @author       mankaki
 // @match        *://www.mgtv.com/*
 // @icon         https://www.google.com/s2/favicons?sz=64&domain=mgtv.com
@@ -31,6 +31,9 @@
     let isManualIntervention = false; // 标记用户本集是否手动干预过（手动开启或关闭）
     let lastManualTime = 0; // 上次手动操作的时间戳，用于冷却锁定
     let isScriptClicking = false; // 标记是否是脚本触发的点击，用于识别用户手动操作
+
+    // 芒果TV 已提供原生选集功能，暂时停用脚本自带的全屏选集，保留实现以便后续兼容性回退。
+    const ENABLE_CUSTOM_FULLSCREEN_EPISODE = false;
 
     // 统一的弹幕开关按钮选择器，兼容 CSS Modules 生成的 hash class（如 _danmuSwitcher_xxx）
     const DANMU_SWITCHER_SELECTOR = '[class*="danmuSwitcher"], .danmu-switch';
@@ -531,6 +534,11 @@
                 word-break: break-word !important;
             }
             `;
+        }
+
+        if (!ENABLE_CUSTOM_FULLSCREEN_EPISODE) {
+            document.getElementById('mgtv_fullscreen_episode_style')?.remove();
+            return;
         }
 
         let fullscreenEpisodeStyle = document.getElementById('mgtv_fullscreen_episode_style');
@@ -2224,6 +2232,11 @@
     }
 
     function toggleFullscreenEpisodePanel(forceOpen) {
+        if (!ENABLE_CUSTOM_FULLSCREEN_EPISODE) {
+            removeFullscreenEpisodePanel();
+            return;
+        }
+
         const button = document.getElementById('mgtv_fullscreen_episode_btn');
         let panel = document.getElementById('mgtv_fullscreen_episode_panel');
         const willOpen = typeof forceOpen === 'boolean'
@@ -2323,6 +2336,13 @@
     }, true);
 
     function ensureFullscreenEpisodeButton() {
+        if (!ENABLE_CUSTOM_FULLSCREEN_EPISODE) {
+            // 临时停用：移除旧版本可能遗留的自定义入口和面板，使用芒果TV原生选集。
+            document.querySelectorAll('[id="mgtv_fullscreen_episode_btn"]').forEach(node => node.remove());
+            removeFullscreenEpisodePanel();
+            return;
+        }
+
         // 播放器重建控制栏时可能会把已注入的 DOM 一起克隆，从而留下多个同 ID 按钮。
         // 克隆节点不会携带 expando 属性和事件监听，所以只保留当前脚本初始化过的那一个。
         const buttonCandidates = Array.from(document.querySelectorAll('[id="mgtv_fullscreen_episode_btn"]'));
