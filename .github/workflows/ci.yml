@@ -24,6 +24,9 @@ jobs:
             node --check "$f"
           done
 
+      - name: Lint
+        run: npx --yes eslint@10 .
+
       - name: Version bumped (PR only)
         if: github.event_name == 'pull_request'
         run: |
@@ -39,4 +42,4 @@ jobs:
 
       - name: Tests (if any)
         run: |
-          if [ -d tests ]; then node --test tests/; else echo "no tests yet"; fi
+          if [ -d tests ]; then node --test tests/*.test.*; else echo "no tests yet"; fi
